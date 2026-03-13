@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980">
+  <rect width="100%" height="100%" fill="#fbfbfc"/>
+
+  <text x="800" y="42" font-size="30" text-anchor="middle" font-family="Arial" fill="#222222">
+    STM32C031C6T6 + Dual MKS GC6609 Wiring
+  </text>
+  <text x="800" y="72" font-size="16" text-anchor="middle" font-family="Arial" fill="#555555">
+    Motor model: 42BYGH34-401A. Wiring below follows measured winding resistance, not label colors.
+  </text>
+
+  <rect x="40" y="110" width="360" height="760" rx="14" fill="#eef5ff" stroke="#4a7dbb" stroke-width="2"/>
+  <text x="220" y="146" font-size="24" text-anchor="middle" font-family="Arial" fill="#1d4f91">STM32C031C6T6</text>
+
+  <text x="70" y="200" font-size="19" font-family="Arial" fill="#111111">PA8  (TIM1_CH1)  M1_STEP</text>
+  <text x="70" y="238" font-size="19" font-family="Arial" fill="#111111">PA0              M1_DIR</text>
+  <text x="70" y="276" font-size="19" font-family="Arial" fill="#111111">PA1              M1_EN</text>
+
+  <text x="70" y="350" font-size="19" font-family="Arial" fill="#111111">PB4  (TIM3_CH1)  M2_STEP</text>
+  <text x="70" y="388" font-size="19" font-family="Arial" fill="#111111">PB0              M2_DIR</text>
+  <text x="70" y="426" font-size="19" font-family="Arial" fill="#111111">PB1              M2_EN</text>
+
+  <text x="70" y="510" font-size="19" font-family="Arial" fill="#111111">3V3</text>
+  <text x="70" y="548" font-size="19" font-family="Arial" fill="#111111">GND</text>
+  <text x="70" y="586" font-size="19" font-family="Arial" fill="#111111">MOTOR_VBUS (+12V / +24V)</text>
+  <text x="70" y="624" font-size="19" font-family="Arial" fill="#111111">POWER_GND</text>
+
+  <text x="70" y="710" font-size="19" font-family="Arial" fill="#111111">PA4  M1_ZERO</text>
+  <text x="70" y="748" font-size="19" font-family="Arial" fill="#111111">PB2  M2_ZERO</text>
+
+  <rect x="455" y="110" width="430" height="330" rx="12" fill="#fff7ef" stroke="#c97a2c" stroke-width="2"/>
+  <text x="670" y="146" font-size="24" text-anchor="middle" font-family="Arial" fill="#8c4d14">MKS GC6609 #1 (PAN)</text>
+  <text x="490" y="192" font-size="18" font-family="Arial" fill="#111111">STEP</text>
+  <text x="490" y="228" font-size="18" font-family="Arial" fill="#111111">DIR</text>
+  <text x="490" y="264" font-size="18" font-family="Arial" fill="#111111">EN</text>
+  <text x="490" y="316" font-size="18" font-family="Arial" fill="#111111">3.3-5V</text>
+  <text x="490" y="352" font-size="18" font-family="Arial" fill="#111111">GND (logic)</text>
+  <text x="490" y="388" font-size="18" font-family="Arial" fill="#111111">VM</text>
+  <text x="490" y="424" font-size="18" font-family="Arial" fill="#111111">GND (power)</text>
+
+  <text x="690" y="212" font-size="18" font-family="Arial" fill="#111111">Motor outputs:</text>
+  <text x="690" y="248" font-size="18" font-family="Arial" fill="#111111">1A / 1B = one coil</text>
+  <text x="690" y="284" font-size="18" font-family="Arial" fill="#111111">2A / 2B = other coil</text>
+  <text x="690" y="336" font-size="17" font-family="Arial" fill="#555555">Leave CLK, PDN/UART, DIAG, INDEX open.</text>
+  <text x="690" y="364" font-size="17" font-family="Arial" fill="#555555">MS1 / MS2 floating = default 1/8 microstep.</text>
+  <text x="690" y="392" font-size="17" font-family="Arial" fill="#555555">EN is active low on GC6609.</text>
+
+  <rect x="455" y="470" width="430" height="330" rx="12" fill="#effbf3" stroke="#31945f" stroke-width="2"/>
+  <text x="670" y="506" font-size="24" text-anchor="middle" font-family="Arial" fill="#17673f">MKS GC6609 #2 (TILT)</text>
+  <text x="490" y="552" font-size="18" font-family="Arial" fill="#111111">STEP</text>
+  <text x="490" y="588" font-size="18" font-family="Arial" fill="#111111">DIR</text>
+  <text x="490" y="624" font-size="18" font-family="Arial" fill="#111111">EN</text>
+  <text x="490" y="676" font-size="18" font-family="Arial" fill="#111111">3.3-5V</text>
+  <text x="490" y="712" font-size="18" font-family="Arial" fill="#111111">GND (logic)</text>
+  <text x="490" y="748" font-size="18" font-family="Arial" fill="#111111">VM</text>
+  <text x="490" y="784" font-size="18" font-family="Arial" fill="#111111">GND (power)</text>
+
+  <text x="690" y="572" font-size="18" font-family="Arial" fill="#111111">Same motor terminal rule:</text>
+  <text x="690" y="608" font-size="18" font-family="Arial" fill="#111111">1A / 1B = one coil</text>
+  <text x="690" y="644" font-size="18" font-family="Arial" fill="#111111">2A / 2B = other coil</text>
+  <text x="690" y="696" font-size="17" font-family="Arial" fill="#555555">If direction is opposite, swap one pair or invert DIR.</text>
+
+  <rect x="980" y="110" width="570" height="690" rx="12" fill="#ffffff" stroke="#777777" stroke-width="2"/>
+  <text x="1265" y="146" font-size="24" text-anchor="middle" font-family="Arial" fill="#333333">42BYGH34-401A Wiring From Measured Coil Pairs</text>
+
+  <text x="1015" y="200" font-size="19" font-family="Arial" fill="#111111">Measured winding resistance:</text>
+  <text x="1040" y="238" font-size="18" font-family="Arial" fill="#111111">Black + Red = about 3.3 ohm</text>
+  <text x="1040" y="274" font-size="18" font-family="Arial" fill="#111111">Green + Blue = about 3.3 ohm</text>
+  <text x="1040" y="310" font-size="18" font-family="Arial" fill="#111111">Any cross pair = about 50 kohm</text>
+  <text x="1040" y="346" font-size="18" font-family="Arial" fill="#111111">Use measured pairs as the source of truth</text>
+
+  <text x="1015" y="410" font-size="19" font-family="Arial" fill="#111111">Coil grouping used here:</text>
+  <text x="1040" y="448" font-size="18" font-family="Arial" fill="#111111">Phase A = Black + Red</text>
+  <text x="1040" y="484" font-size="18" font-family="Arial" fill="#111111">Phase B = Green + Blue</text>
+
+  <text x="1015" y="548" font-size="19" font-family="Arial" fill="#111111">Correct MKS terminal mapping:</text>
+  <text x="1040" y="586" font-size="18" font-family="Arial" fill="#111111">1A = Black</text>
+  <text x="1040" y="622" font-size="18" font-family="Arial" fill="#111111">1B = Red</text>
+  <text x="1040" y="658" font-size="18" font-family="Arial" fill="#111111">2A = Green</text>
+  <text x="1040" y="694" font-size="18" font-family="Arial" fill="#111111">2B = Blue</text>
+
+  <line x1="400" y1="198" x2="455" y2="198" stroke="#d34848" stroke-width="3"/>
+  <line x1="400" y1="236" x2="455" y2="234" stroke="#d34848" stroke-width="3"/>
+  <line x1="400" y1="274" x2="455" y2="270" stroke="#d34848" stroke-width="3"/>
+
+  <line x1="400" y1="348" x2="455" y2="558" stroke="#2c8f53" stroke-width="3"/>
+  <line x1="400" y1="386" x2="455" y2="594" stroke="#2c8f53" stroke-width="3"/>
+  <line x1="400" y1="424" x2="455" y2="630" stroke="#2c8f53" stroke-width="3"/>
+
+  <line x1="400" y1="510" x2="455" y2="316" stroke="#3476cc" stroke-width="3"/>
+  <line x1="400" y1="548" x2="455" y2="352" stroke="#444444" stroke-width="3"/>
+  <line x1="400" y1="586" x2="455" y2="388" stroke="#8f4b20" stroke-width="3"/>
+  <line x1="400" y1="624" x2="455" y2="424" stroke="#444444" stroke-width="3"/>
+
+  <line x1="400" y1="510" x2="455" y2="676" stroke="#3476cc" stroke-width="3"/>
+  <line x1="400" y1="548" x2="455" y2="712" stroke="#444444" stroke-width="3"/>
+  <line x1="400" y1="586" x2="455" y2="748" stroke="#8f4b20" stroke-width="3"/>
+  <line x1="400" y1="624" x2="455" y2="784" stroke="#444444" stroke-width="3"/>
+
+  <line x1="885" y1="248" x2="1015" y2="586" stroke="#000000" stroke-width="4"/>
+  <line x1="885" y1="268" x2="1015" y2="622" stroke="#d34848" stroke-width="4"/>
+  <line x1="885" y1="620" x2="1015" y2="658" stroke="#28a745" stroke-width="4"/>
+  <line x1="885" y1="640" x2="1015" y2="694" stroke="#3476cc" stroke-width="4"/>
+
+  <rect x="40" y="890" width="1510" height="60" rx="10" fill="#fff5d9" stroke="#d4b14d" stroke-width="2"/>
+  <text x="70" y="928" font-size="18" font-family="Arial" fill="#333333">
+    Important: This drawing follows the measured pairs Black-Red and Green-Blue. If your meter says otherwise on a different motor, trust the resistance measurement over color labels.
+  </text>
+</svg>
