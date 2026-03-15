@@ -2,6 +2,7 @@
 import queue
 import threading
 import tkinter as tk
+from collections import deque
 from dataclasses import dataclass
 from tkinter import messagebox, simpledialog
 
@@ -10,10 +11,12 @@ from serial.tools import list_ports
 
 
 DRIVER_PROFILES = {
-    "GC6609": {"steps_per_rev": 1600},
-    "DM556": {"steps_per_rev": 1600},
+    "GC6609": {"steps_per_rev": 3200, "wakeup_us": 0},
+    "DM556": {"steps_per_rev": 1600, "wakeup_us": 0},
+    "A4988": {"steps_per_rev": 1600, "wakeup_us": 1000},
 }
 DEFAULT_DRIVER = "GC6609"
+A4988_MICROSTEP_STEPS = [200, 400, 800, 1600, 3200]
 SPEED_MIN_RPM = 1
 SPEED_MAX_RPM = 1875
 ACCEL_MIN_RPMPS = 4
@@ -21,33 +24,54 @@ ACCEL_MAX_RPMPS = 1875
 DEFAULT_SPEED_RPM = 10
 DEFAULT_ACCEL_RPMPS = 60
 
-BG = "#ebe6dc"
-PANEL = "#f7f3eb"
-PANEL_ALT = "#efe7da"
-TEXT = "#2f2a24"
-MUTED = "#786e62"
-ACCENT = "#c55a3f"
-ACCENT_SOFT = "#ead6c9"
-BTN = "#d8cfbf"
-BTN_ACTIVE = "#c8bba8"
-BTN_GO = "#93a66e"
-BTN_WARN = "#d5a056"
-BTN_STOP = "#c86f63"
-VALUE_BG = "#fffdf8"
-LINE = "#d6cab8"
-M1_PANEL = "#fff1ed"
-M1_HEAD = "#f6d5cb"
-M1_LINE = "#d07a60"
-M2_PANEL = "#eef8f1"
-M2_HEAD = "#d5eadc"
-M2_LINE = "#6f9d7e"
-OK_BG = "#9ab07b"
-ERR_BG = "#bf6c62"
-INFO_BG = "#b8ad9f"
+BG = "#eef3ef"
+PANEL = "#fbfdf9"
+PANEL_ALT = "#e3ece3"
+TEXT = "#213128"
+MUTED = "#607267"
+ACCENT = "#2f7a67"
+ACCENT_SOFT = "#d5ebe4"
+BTN = "#d9e3dc"
+BTN_ACTIVE = "#cad6cf"
+BTN_GO = "#5f9361"
+BTN_WARN = "#d59d45"
+BTN_STOP = "#b85c52"
+VALUE_BG = "#ffffff"
+LINE = "#cdd9d1"
+M1_PANEL = "#f8faf6"
+M1_HEAD = "#dbe8d8"
+M1_LINE = "#72926d"
+M2_PANEL = "#f8f8fb"
+M2_HEAD = "#dbe1ef"
+M2_LINE = "#6e81aa"
+OK_BG = "#6f9e66"
+ERR_BG = "#c16057"
+INFO_BG = "#6f7f87"
+LOG_BG = "#f4f6f4"
+SELECT_ON_BG = "#355f52"
+SELECT_OFF_BG = "#b0b8b2"
+SELECT_PARTIAL_BG = "#c1873f"
+CHART_BG = "#f7faf7"
+CHART_GRID = "#d6ddd7"
+CHART_TEXT = "#54645a"
+M1_TRACE = "#5f9361"
+M2_TRACE = "#5878b1"
 
 MOTOR_STYLE = {
-    "m1": {"title": "M1 / PAN", "panel": M1_PANEL, "head": M1_HEAD, "line": M1_LINE, "tag": "TIM1 PA8 STEP | PA0 DIR | PA1 EN"},
-    "m2": {"title": "M2 / TILT", "panel": M2_PANEL, "head": M2_HEAD, "line": M2_LINE, "tag": "TIM3 PB4 STEP | PB0 DIR | PB1 EN"},
+    "m1": {
+        "title": "M1 / PAN",
+        "panel": M1_PANEL,
+        "head": M1_HEAD,
+        "line": M1_LINE,
+        "tag": "TIM1 PA8 STEP | PA0 DIR | PA1 EN",
+    },
+    "m2": {
+        "title": "M2 / TILT",
+        "panel": M2_PANEL,
+        "head": M2_HEAD,
+        "line": M2_LINE,
+        "tag": "TIM3 PB4 STEP | PB0 DIR | PB1 EN",
+    },
 }
 
 
@@ -55,6 +79,7 @@ MOTOR_STYLE = {
 class MotorTelemetry:
     driver: str = DEFAULT_DRIVER
     steps_rev: int = DRIVER_PROFILES[DEFAULT_DRIVER]["steps_per_rev"]
+    wakeup_us: int = DRIVER_PROFILES[DEFAULT_DRIVER]["wakeup_us"]
     state: str = "IDLE"
     dir: str = "STOP"
     target_hz: int = 0
@@ -77,6 +102,11 @@ class SerialClient:
     def connect(self, port: str, baud: int):
         self.disconnect()
         self.ser = serial.Serial(port, baud, timeout=0.2)
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.reset_output_buffer()
+        except Exception:
+            pass
         self.stop_evt.clear()
         self.thread = threading.Thread(target=self._rx_loop, daemon=True)
         self.thread.start()
@@ -98,6 +128,14 @@ class SerialClient:
             raise RuntimeError("serial link not connected")
         self.ser.write((text.strip() + "\r\n").encode())
 
+    def flush_input(self):
+        if not self.is_open():
+            return
+        try:
+            self.ser.reset_input_buffer()
+        except Exception:
+            pass
+
     def _rx_loop(self):
         while not self.stop_evt.is_set():
             if self.ser is None:
@@ -116,10 +154,15 @@ class MotorCard:
         self.app = app
         self.motor_key = motor_key
         style = MOTOR_STYLE[motor_key]
+        self.style = style
+        self.selected_var = tk.IntVar(value=1)
         self.speed_var = tk.StringVar(value=str(DEFAULT_SPEED_RPM))
         self.accel_var = tk.StringVar(value=str(DEFAULT_ACCEL_RPMPS))
         self.driver_var = tk.StringVar(value=DEFAULT_DRIVER)
+        self.steps_var = tk.StringVar(value=str(DRIVER_PROFILES[DEFAULT_DRIVER]["steps_per_rev"]))
+        self.wakeup_var = tk.StringVar(value=str(DRIVER_PROFILES[DEFAULT_DRIVER]["wakeup_us"]))
         self.badge_var = tk.StringVar(value=f"{style['title']} IDLE")
+        self.selection_var = tk.StringVar(value="Included in grouped actions")
         self.target_var = tk.StringVar(value="0 rpm")
         self.actual_var = tk.StringVar(value="0 rpm")
         self.state_var = tk.StringVar(value="IDLE")
@@ -130,7 +173,8 @@ class MotorCard:
         self.accel_status_var = tk.StringVar(value=f"{DEFAULT_ACCEL_RPMPS} rpm/s")
 
         self.panel, _head, body = app.create_panel(parent, style["title"], style["tag"], style["panel"], style["head"], style["line"])
-        self.panel.pack(fill=tk.X, pady=(0, 14))
+        self.panel.pack(fill=tk.X, pady=(0, 16))
+        self.selection_badge = None
 
         self.badge = tk.Button(
             body,
@@ -142,43 +186,83 @@ class MotorCard:
             relief=tk.FLAT,
             bd=0,
             padx=12,
-            pady=9,
+            pady=10,
             highlightthickness=1,
             highlightbackground=style["line"],
             font=("Helvetica", 11, "bold"),
             cursor="arrow",
+            anchor=tk.W,
         )
         self.badge.pack(fill=tk.X)
 
+        selection_row = tk.Frame(body, bg=style["panel"])
+        selection_row.pack(fill=tk.X, pady=(10, 10))
+        tk.Checkbutton(
+            selection_row,
+            text="Group Select",
+            variable=self.selected_var,
+            command=self._selection_changed,
+            bg=style["panel"],
+            fg=TEXT,
+            activebackground=style["panel"],
+            selectcolor=VALUE_BG,
+            font=("Helvetica", 10, "bold"),
+        ).pack(side=tk.LEFT)
+        self.selection_badge = tk.Button(
+            selection_row,
+            textvariable=self.selection_var,
+            bg=SELECT_ON_BG,
+            fg="#ffffff",
+            activebackground=SELECT_ON_BG,
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            bd=0,
+            padx=10,
+            pady=7,
+            highlightthickness=1,
+            highlightbackground=style["line"],
+            font=("Helvetica", 10, "bold"),
+            cursor="arrow",
+            width=24,
+        )
+        self.selection_badge.pack(side=tk.RIGHT)
+
         cfg = tk.Frame(body, bg=style["panel"])
-        cfg.pack(fill=tk.X, pady=(12, 10))
+        cfg.pack(fill=tk.X, pady=(0, 10))
         self._build_driver_row(cfg, style["panel"])
+        self._build_steps_row(cfg, style["panel"])
+        self._build_wakeup_row(cfg, style["panel"])
         self._build_speed_row(cfg, style["panel"])
         self._build_accel_row(cfg, style["panel"])
 
         metrics = tk.Frame(body, bg=style["panel"])
         metrics.pack(fill=tk.X, pady=(0, 10))
-        for col in range(4):
+        for col in range(3):
             metrics.grid_columnconfigure(col, weight=1)
         app.metric_tile(metrics, 0, "State", self.state_var)
-        app.metric_tile(metrics, 1, "Dir", self.dir_var)
+        app.metric_tile(metrics, 1, "Direction", self.dir_var)
         app.metric_tile(metrics, 2, "Target", self.target_var)
-        app.metric_tile(metrics, 3, "Actual", self.actual_var)
 
         metrics2 = tk.Frame(body, bg=style["panel"])
         metrics2.pack(fill=tk.X, pady=(0, 10))
-        for col in range(4):
+        for col in range(3):
             metrics2.grid_columnconfigure(col, weight=1)
-        app.metric_tile(metrics2, 0, "0-bit", self.zero_var)
-        app.metric_tile(metrics2, 1, "Fault", self.fault_var)
-        app.metric_tile(metrics2, 2, "Pin Override", self.override_var)
-        app.metric_tile(metrics2, 3, "Accel", self.accel_status_var)
+        app.metric_tile(metrics2, 0, "Actual", self.actual_var)
+        app.metric_tile(metrics2, 1, "Accel", self.accel_status_var)
+        app.metric_tile(metrics2, 2, "0-bit", self.zero_var)
+
+        metrics3 = tk.Frame(body, bg=style["panel"])
+        metrics3.pack(fill=tk.X, pady=(0, 10))
+        for col in range(2):
+            metrics3.grid_columnconfigure(col, weight=1)
+        app.metric_tile(metrics3, 0, "Fault", self.fault_var)
+        app.metric_tile(metrics3, 1, "Pin Override", self.override_var)
 
         ctrl = tk.Frame(body, bg=style["panel"])
         ctrl.pack(fill=tk.X, pady=(0, 10))
-        app.button(ctrl, f"{motor_key.upper()} Forward", lambda: app.drive_motor(motor_key, "f"), width=13, bg=BTN_GO, fg="#ffffff").pack(side=tk.LEFT)
-        app.button(ctrl, f"{motor_key.upper()} Reverse", lambda: app.drive_motor(motor_key, "r"), width=13, bg=ACCENT, fg="#ffffff").pack(side=tk.LEFT, padx=8)
-        app.button(ctrl, f"{motor_key.upper()} Stop", lambda: app.stop_motor(motor_key), width=11, bg=BTN_STOP, fg="#ffffff").pack(side=tk.LEFT)
+        app.button(ctrl, f"{motor_key.upper()} FWD", lambda: app.drive_motor(motor_key, "f"), width=11, bg=BTN_GO, fg="#ffffff").pack(side=tk.LEFT)
+        app.button(ctrl, f"{motor_key.upper()} REV", lambda: app.drive_motor(motor_key, "r"), width=11, bg=ACCENT, fg="#ffffff").pack(side=tk.LEFT, padx=8)
+        app.button(ctrl, f"{motor_key.upper()} STOP", lambda: app.stop_motor(motor_key), width=11, bg=BTN_STOP, fg="#ffffff").pack(side=tk.LEFT)
         app.button(ctrl, "Apply Accel", lambda: app.apply_motor_cfg(motor_key), width=11, bg=BTN_WARN).pack(side=tk.RIGHT)
 
         diag = tk.Frame(body, bg=style["panel"])
@@ -195,6 +279,26 @@ class MotorCard:
         app.button(pins, "STEP Low", lambda: app.pin_test(motor_key, "step", "lo"), width=9).pack(side=tk.LEFT)
         app.button(pins, "STEP High", lambda: app.pin_test(motor_key, "step", "hi"), width=9).pack(side=tk.LEFT, padx=6)
         app.button(pins, "Restore", lambda: app.pin_restore(motor_key), width=9, bg=ACCENT_SOFT).pack(side=tk.RIGHT)
+        self.refresh_group_visuals()
+
+    def _selection_changed(self):
+        if self.selected_var.get():
+            self.selection_var.set("Included in grouped actions")
+        else:
+            self.selection_var.set("Excluded from grouped actions")
+        self.refresh_group_visuals()
+        self.app.refresh_group_summary()
+
+    def refresh_group_visuals(self):
+        selected = bool(self.selected_var.get())
+        if selected:
+            self.selection_var.set("Included in grouped actions")
+            self.selection_badge.configure(bg=SELECT_ON_BG, activebackground=SELECT_ON_BG)
+            self.panel.configure(highlightbackground=self.style["line"], highlightthickness=2)
+        else:
+            self.selection_var.set("Excluded from grouped actions")
+            self.selection_badge.configure(bg=SELECT_OFF_BG, activebackground=SELECT_OFF_BG)
+            self.panel.configure(highlightbackground=LINE, highlightthickness=1)
 
     def _build_speed_row(self, parent, panel_bg):
         row = tk.Frame(parent, bg=panel_bg)
@@ -214,6 +318,42 @@ class MotorCard:
         self.app.value_button(row, self.driver_var, width=10).pack(side=tk.LEFT, padx=(10, 10))
         self.app.button(row, "GC6609", lambda: self.app.set_driver(self.motor_key, "GC6609"), width=8).pack(side=tk.LEFT)
         self.app.button(row, "DM556", lambda: self.app.set_driver(self.motor_key, "DM556"), width=8, bg=ACCENT_SOFT).pack(side=tk.LEFT, padx=6)
+        self.app.button(row, "A4988", lambda: self.app.set_driver(self.motor_key, "A4988"), width=8).pack(side=tk.LEFT)
+
+    def _build_steps_row(self, parent, panel_bg):
+        row = tk.Frame(parent, bg=panel_bg)
+        row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(row, text="Steps/rev", bg=panel_bg, fg=TEXT, font=("Helvetica", 11, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(
+            row,
+            self.steps_var,
+            lambda: self.app.prompt_steps_rev(self.motor_key),
+            width=10,
+        ).pack(side=tk.LEFT, padx=(10, 10))
+        for steps in A4988_MICROSTEP_STEPS:
+            self.app.button(
+                row,
+                str(steps),
+                lambda s=steps: self.app.set_steps_rev(self.motor_key, s),
+                width=6,
+                bg=ACCENT_SOFT if steps == 1600 else BTN,
+            ).pack(side=tk.LEFT, padx=(0, 6) if steps != A4988_MICROSTEP_STEPS[-1] else 0)
+
+    def _build_wakeup_row(self, parent, panel_bg):
+        row = tk.Frame(parent, bg=panel_bg)
+        row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(row, text="Wakeup", bg=panel_bg, fg=TEXT, font=("Helvetica", 11, "bold")).pack(side=tk.LEFT)
+        self.app.button(row, "-500", lambda: self.app.adjust_wakeup_us(self.motor_key, -500), width=6).pack(side=tk.LEFT, padx=(10, 6))
+        self.app.button(row, "-100", lambda: self.app.adjust_wakeup_us(self.motor_key, -100), width=6).pack(side=tk.LEFT, padx=(0, 6))
+        self.app.value_button(
+            row,
+            self.wakeup_var,
+            lambda: self.app.prompt_wakeup_us(self.motor_key),
+            width=10,
+        ).pack(side=tk.LEFT)
+        tk.Label(row, text="us", bg=panel_bg, fg=MUTED, font=("Helvetica", 10)).pack(side=tk.LEFT, padx=(6, 12))
+        self.app.button(row, "+100", lambda: self.app.adjust_wakeup_us(self.motor_key, 100), width=6).pack(side=tk.LEFT, padx=(0, 6))
+        self.app.button(row, "+500", lambda: self.app.adjust_wakeup_us(self.motor_key, 500), width=6).pack(side=tk.LEFT)
 
     def _build_accel_row(self, parent, panel_bg):
         row = tk.Frame(parent, bg=panel_bg)
@@ -253,6 +393,8 @@ class MotorCard:
 
     def update_from_telemetry(self, data: MotorTelemetry):
         self.driver_var.set(data.driver)
+        self.steps_var.set(str(data.steps_rev))
+        self.wakeup_var.set(str(data.wakeup_us))
         self.state_var.set(data.state)
         self.dir_var.set(data.dir)
         steps_rev = max(1, data.steps_rev)
@@ -288,9 +430,9 @@ class MotorCard:
 class PTZGui:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("PTZ Dual Motor Console")
-        self.root.geometry("1480x920")
-        self.root.minsize(1260, 820)
+        self.root.title("PTZ Pegasus Console")
+        self.root.geometry("1560x960")
+        self.root.minsize(1320, 860)
         self.root.configure(bg=BG)
         self.client = SerialClient()
         self.port_var = tk.StringVar()
@@ -305,15 +447,24 @@ class PTZGui:
         self.event_var = tk.StringVar(value="No events")
         self.telemetry_var = tk.StringVar(value="telemetry=on")
         self.manual_var = tk.StringVar()
+        self.group_var = tk.StringVar(value="Grouped axes: M1 + M2")
+        self.mode_hint_var = tk.StringVar(value="Continuous mode: selected axes keep rotating until Stop")
         self.cards = {}
         self.telemetry = {"m1": MotorTelemetry(), "m2": MotorTelemetry()}
         self.pulse_job = {"m1": None, "m2": None}
         self.pulse_active = {"m1": False, "m2": False}
         self.pulse_direction = {"m1": "f", "m2": "f"}
+        self.connect_seq = 0
+        self.active_connect_seq = 0
+        self.version_query_job = None
         self.port_menu = None
         self.build_badge = None
         self.link_badge = None
         self.event_badge = None
+        self.group_badge = None
+        self.trend_canvas = None
+        self.trend_note_var = tk.StringVar(value="Trend window: waiting for STAT frames")
+        self.trend_history = deque(maxlen=120)
         self.log = None
 
         self.jog_ms_var.trace_add("write", lambda *_args: self._refresh_mode_value_labels())
@@ -324,6 +475,8 @@ class PTZGui:
         self.root.after(80, self._poll_queue)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._refresh_mode_value_labels()
+        self.refresh_group_summary()
+        self._update_mode_hint()
 
     def button(self, parent, text, cmd, width=10, bg=BTN, fg=TEXT):
         return tk.Button(
@@ -404,7 +557,11 @@ class PTZGui:
     def _build_ui(self):
         header = tk.Frame(self.root, bg=BG, padx=18, pady=14)
         header.pack(fill=tk.X)
-        tk.Label(header, text="PTZ Dual Motor Console", bg=BG, fg=TEXT, font=("Helvetica", 22, "bold")).pack(side=tk.LEFT)
+        title_wrap = tk.Frame(header, bg=BG)
+        title_wrap.pack(side=tk.LEFT)
+        tk.Label(title_wrap, text="PTZ Pegasus Console", bg=BG, fg=TEXT, font=("Helvetica", 23, "bold")).pack(anchor=tk.W)
+        tk.Label(title_wrap, text="Connection, grouped jog operations, dual-axis tuning, and protocol telemetry", bg=BG, fg=MUTED, font=("Helvetica", 11)).pack(anchor=tk.W, pady=(2, 0))
+
         self.link_badge = tk.Button(
             header,
             textvariable=self.link_var,
@@ -423,31 +580,32 @@ class PTZGui:
         )
         self.link_badge.pack(side=tk.RIGHT)
 
-        main = tk.Frame(self.root, bg=BG, padx=18, pady=8)
-        main.pack(fill=tk.BOTH, expand=True)
-        main.grid_columnconfigure(1, weight=1)
-        main.grid_rowconfigure(0, weight=1)
+        board = tk.Frame(self.root, bg=BG, padx=18, pady=6)
+        board.pack(fill=tk.BOTH, expand=True)
+        board.grid_columnconfigure(1, weight=1)
+        board.grid_rowconfigure(0, weight=1)
 
-        left = tk.Frame(main, bg=BG)
-        left.grid(row=0, column=0, sticky=tk.NS, padx=(0, 14))
-        center = tk.Frame(main, bg=BG)
-        center.grid(row=0, column=1, sticky=tk.NSEW, padx=(0, 14))
+        left = tk.Frame(board, bg=BG)
+        left.grid(row=0, column=0, sticky=tk.NS, padx=(0, 16))
+        center = tk.Frame(board, bg=BG)
+        center.grid(row=0, column=1, sticky=tk.NSEW, padx=(0, 16))
         center.grid_columnconfigure(0, weight=1)
-        right = tk.Frame(main, bg=BG)
+        right = tk.Frame(board, bg=BG)
         right.grid(row=0, column=2, sticky=tk.NSEW)
-        right.grid_rowconfigure(1, weight=1)
+        right.grid_rowconfigure(2, weight=1)
 
         self._build_link_panel(left)
-        self._build_mode_panel(left)
-        self._build_system_panel(left)
+        self._build_motion_panel(left)
+        self._build_system_panel(right)
+        self._build_trend_panel(right)
         self._build_log_panel(right)
 
         self.cards["m1"] = MotorCard(self, center, "m1")
         self.cards["m2"] = MotorCard(self, center, "m2")
 
     def _build_link_panel(self, parent):
-        panel, _head, body = self.create_panel(parent, "Communication", "USB VCP and firmware handshake")
-        panel.pack(fill=tk.X, pady=(0, 14))
+        panel, _head, body = self.create_panel(parent, "Connection Deck", "USB VCP discovery, baud selection, and firmware handshake")
+        panel.pack(fill=tk.X, pady=(0, 16))
         body.grid_columnconfigure(1, weight=1)
 
         tk.Label(body, text="Port", bg=PANEL, fg=TEXT, font=("Helvetica", 11)).grid(row=0, column=0, sticky=tk.W, pady=4)
@@ -477,7 +635,7 @@ class PTZGui:
             bd=0,
             padx=10,
             pady=8,
-            wraplength=280,
+            wraplength=290,
             justify=tk.LEFT,
             anchor=tk.W,
             highlightthickness=1,
@@ -487,32 +645,19 @@ class PTZGui:
         )
         self.build_badge.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
 
-    def _build_mode_panel(self, parent):
-        panel, _head, body = self.create_panel(parent, "Run Mode", "Continuous, single jog, or repeated jog with adjustable frequency")
-        panel.pack(fill=tk.X, pady=(0, 14))
+    def _build_motion_panel(self, parent):
+        panel, _head, body = self.create_panel(parent, "Motion Deck", "Pegasus-style grouped motion workflow: select axes, set mode, then jog or run")
+        panel.pack(fill=tk.BOTH, expand=True)
 
-        tk.Radiobutton(body, text="Continuous", variable=self.mode_var, value="continuous", bg=PANEL, fg=TEXT, selectcolor=VALUE_BG, activebackground=PANEL, font=("Helvetica", 11)).grid(row=0, column=0, sticky=tk.W, pady=4)
-        tk.Radiobutton(body, text="Jog", variable=self.mode_var, value="jog", bg=PANEL, fg=TEXT, selectcolor=VALUE_BG, activebackground=PANEL, font=("Helvetica", 11)).grid(row=1, column=0, sticky=tk.W, pady=4)
-        tk.Radiobutton(body, text="Pulse Repeat", variable=self.mode_var, value="pulse_repeat", bg=PANEL, fg=TEXT, selectcolor=VALUE_BG, activebackground=PANEL, font=("Helvetica", 11)).grid(row=2, column=0, sticky=tk.W, pady=4)
-        jog_row = tk.Frame(body, bg=PANEL)
-        jog_row.grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=(10, 4))
-        self.button(jog_row, "Jog -100", lambda: self.adjust_jog_ms(-100), width=8).pack(side=tk.LEFT)
-        self.button(jog_row, "Jog -10", lambda: self.adjust_jog_ms(-10), width=7).pack(side=tk.LEFT, padx=6)
-        self.value_button(jog_row, self.jog_display_var, lambda: self.prompt_mode_value("Jog time (ms)", self.jog_ms_var, 20, 60000, is_float=False), width=12).pack(side=tk.LEFT)
-        self.button(jog_row, "Jog +10", lambda: self.adjust_jog_ms(10), width=7).pack(side=tk.LEFT, padx=6)
-        self.button(jog_row, "Jog +100", lambda: self.adjust_jog_ms(100), width=8).pack(side=tk.LEFT)
+        modes = tk.Frame(body, bg=PANEL)
+        modes.pack(fill=tk.X)
+        tk.Radiobutton(modes, text="Continuous", variable=self.mode_var, value="continuous", bg=PANEL, fg=TEXT, selectcolor=VALUE_BG, activebackground=PANEL, font=("Helvetica", 11)).grid(row=0, column=0, sticky=tk.W, pady=4)
+        tk.Radiobutton(modes, text="Jog", variable=self.mode_var, value="jog", bg=PANEL, fg=TEXT, selectcolor=VALUE_BG, activebackground=PANEL, font=("Helvetica", 11)).grid(row=1, column=0, sticky=tk.W, pady=4)
+        tk.Radiobutton(modes, text="Pulse Repeat", variable=self.mode_var, value="pulse_repeat", bg=PANEL, fg=TEXT, selectcolor=VALUE_BG, activebackground=PANEL, font=("Helvetica", 11)).grid(row=2, column=0, sticky=tk.W, pady=4)
 
-        pulse_row = tk.Frame(body, bg=PANEL)
-        pulse_row.grid(row=4, column=0, columnspan=3, sticky=tk.EW, pady=(4, 4))
-        self.button(pulse_row, "Hz -0.5", lambda: self.adjust_pulse_hz(-0.5), width=8).pack(side=tk.LEFT)
-        self.button(pulse_row, "Hz -0.1", lambda: self.adjust_pulse_hz(-0.1), width=8).pack(side=tk.LEFT, padx=6)
-        self.value_button(pulse_row, self.pulse_display_var, lambda: self.prompt_mode_value("Pulse rate (Hz)", self.pulse_hz_var, 0.2, 10.0, is_float=True), width=12).pack(side=tk.LEFT)
-        self.button(pulse_row, "Hz +0.1", lambda: self.adjust_pulse_hz(0.1), width=8).pack(side=tk.LEFT, padx=6)
-        self.button(pulse_row, "Hz +0.5", lambda: self.adjust_pulse_hz(0.5), width=8).pack(side=tk.LEFT)
-
-        tk.Button(
+        hint = tk.Button(
             body,
-            text="Pulse Repeat periodically sends jog commands at the selected frequency",
+            textvariable=self.mode_hint_var,
             bg=INFO_BG,
             fg="#ffffff",
             activebackground=INFO_BG,
@@ -521,19 +666,89 @@ class PTZGui:
             bd=0,
             padx=10,
             pady=8,
-            wraplength=300,
+            wraplength=320,
             justify=tk.LEFT,
             anchor=tk.W,
             highlightthickness=1,
             highlightbackground=LINE,
             font=("Helvetica", 9, "bold"),
             cursor="arrow",
-        ).grid(row=5, column=0, columnspan=3, sticky=tk.EW, pady=(4, 0))
-        self.button(body, "ALL STOP", self.stop_all, width=26, bg=BTN_STOP, fg="#ffffff").grid(row=6, column=0, columnspan=3, sticky=tk.EW, pady=(10, 0))
+        )
+        hint.pack(fill=tk.X, pady=(10, 8))
+
+        jog_row = tk.Frame(body, bg=PANEL)
+        jog_row.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(jog_row, text="Jog Time", bg=PANEL, fg=TEXT, font=("Helvetica", 11, "bold")).pack(side=tk.LEFT)
+        self.button(jog_row, "-100", lambda: self.adjust_jog_ms(-100), width=6).pack(side=tk.LEFT, padx=(10, 6))
+        self.button(jog_row, "-10", lambda: self.adjust_jog_ms(-10), width=5).pack(side=tk.LEFT, padx=(0, 6))
+        self.value_button(jog_row, self.jog_display_var, lambda: self.prompt_mode_value("Jog time (ms)", self.jog_ms_var, 20, 60000, is_float=False), width=12).pack(side=tk.LEFT)
+        self.button(jog_row, "+10", lambda: self.adjust_jog_ms(10), width=5).pack(side=tk.LEFT, padx=6)
+        self.button(jog_row, "+100", lambda: self.adjust_jog_ms(100), width=6).pack(side=tk.LEFT)
+
+        pulse_row = tk.Frame(body, bg=PANEL)
+        pulse_row.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(pulse_row, text="Pulse Rate", bg=PANEL, fg=TEXT, font=("Helvetica", 11, "bold")).pack(side=tk.LEFT)
+        self.button(pulse_row, "-0.5", lambda: self.adjust_pulse_hz(-0.5), width=6).pack(side=tk.LEFT, padx=(10, 6))
+        self.button(pulse_row, "-0.1", lambda: self.adjust_pulse_hz(-0.1), width=6).pack(side=tk.LEFT, padx=(0, 6))
+        self.value_button(pulse_row, self.pulse_display_var, lambda: self.prompt_mode_value("Pulse rate (Hz)", self.pulse_hz_var, 0.2, 10.0, is_float=True), width=12).pack(side=tk.LEFT)
+        self.button(pulse_row, "+0.1", lambda: self.adjust_pulse_hz(0.1), width=6).pack(side=tk.LEFT, padx=6)
+        self.button(pulse_row, "+0.5", lambda: self.adjust_pulse_hz(0.5), width=6).pack(side=tk.LEFT)
+
+        self.group_badge = tk.Button(
+            body,
+            textvariable=self.group_var,
+            bg=ACCENT,
+            fg="#ffffff",
+            activebackground=ACCENT,
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            bd=0,
+            padx=10,
+            pady=9,
+            wraplength=320,
+            justify=tk.LEFT,
+            anchor=tk.W,
+            highlightthickness=1,
+            highlightbackground=LINE,
+            font=("Helvetica", 10, "bold"),
+            cursor="arrow",
+        )
+        self.group_badge.pack(fill=tk.X, pady=(0, 10))
+
+        group1 = tk.Frame(body, bg=PANEL)
+        group1.pack(fill=tk.X, pady=(0, 8))
+        self.button(group1, "Selected FWD", lambda: self.drive_selected("f"), width=15, bg=BTN_GO, fg="#ffffff").pack(side=tk.LEFT)
+        self.button(group1, "Selected REV", lambda: self.drive_selected("r"), width=15, bg=ACCENT, fg="#ffffff").pack(side=tk.LEFT, padx=8)
+
+        group2 = tk.Frame(body, bg=PANEL)
+        group2.pack(fill=tk.X, pady=(0, 8))
+        self.button(group2, "Stop Selected", self.stop_selected, width=15, bg=BTN_WARN).pack(side=tk.LEFT)
+        self.button(group2, "ALL STOP", self.stop_all, width=15, bg=BTN_STOP, fg="#ffffff").pack(side=tk.LEFT, padx=8)
+
+        note = tk.Button(
+            body,
+            text="Grouped actions apply the active mode. In Continuous they run until Stop. In Jog they send one firmware jog. In Pulse Repeat they schedule repeated jog pulses.",
+            bg=ACCENT_SOFT,
+            fg=TEXT,
+            activebackground=ACCENT_SOFT,
+            activeforeground=TEXT,
+            relief=tk.FLAT,
+            bd=0,
+            padx=10,
+            pady=8,
+            wraplength=320,
+            justify=tk.LEFT,
+            anchor=tk.W,
+            highlightthickness=1,
+            highlightbackground=LINE,
+            font=("Helvetica", 9, "bold"),
+            cursor="arrow",
+        )
+        note.pack(fill=tk.X)
 
     def _build_system_panel(self, parent):
-        panel, _head, body = self.create_panel(parent, "System", "Status, telemetry and manual protocol")
-        panel.pack(fill=tk.BOTH, expand=True)
+        panel, _head, body = self.create_panel(parent, "Session Monitor", "Status, telemetry policy, and manual protocol control")
+        panel.grid(row=0, column=0, sticky=tk.EW, pady=(0, 16))
 
         status_row = tk.Frame(body, bg=PANEL)
         status_row.pack(fill=tk.X, pady=(0, 8))
@@ -573,7 +788,7 @@ class PTZGui:
             bd=0,
             padx=10,
             pady=8,
-            wraplength=300,
+            wraplength=330,
             justify=tk.LEFT,
             anchor=tk.W,
             highlightthickness=1,
@@ -583,8 +798,8 @@ class PTZGui:
         )
         self.event_badge.pack(fill=tk.X, pady=(0, 8))
 
-        tk.Label(body, text="Manual Cmd", bg=PANEL, fg=TEXT, font=("Helvetica", 11, "bold")).pack(anchor=tk.W)
-        entry = self.entry(body, self.manual_var, width=28, justify=tk.LEFT)
+        tk.Label(body, text="Manual Command", bg=PANEL, fg=TEXT, font=("Helvetica", 11, "bold")).pack(anchor=tk.W)
+        entry = self.entry(body, self.manual_var, width=30, justify=tk.LEFT)
         entry.pack(fill=tk.X, pady=(6, 8))
         entry.bind("<Return>", lambda _evt: self.send_manual())
 
@@ -594,17 +809,59 @@ class PTZGui:
         self.button(cmds, "M1 Diag", lambda: self.send_line("m1 diag"), width=9).pack(side=tk.LEFT, padx=8)
         self.button(cmds, "M2 Diag", lambda: self.send_line("m2 diag"), width=9).pack(side=tk.LEFT)
 
+    def _build_trend_panel(self, parent):
+        panel, _head, body = self.create_panel(parent, "Live Trend", "Recent rpm curves plus compact state/fault lanes for M1 and M2")
+        panel.grid(row=1, column=0, sticky=tk.EW, pady=(0, 16))
+        legend = tk.Frame(body, bg=PANEL)
+        legend.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(legend, text="M1 rpm", bg=PANEL, fg=M1_TRACE, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(legend, text="M2 rpm", bg=PANEL, fg=M2_TRACE, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT, padx=14)
+        tk.Label(legend, text="State/Fault lanes", bg=PANEL, fg=CHART_TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.RIGHT)
+
+        self.trend_canvas = tk.Canvas(
+            body,
+            width=420,
+            height=220,
+            bg=CHART_BG,
+            highlightthickness=1,
+            highlightbackground=LINE,
+            bd=0,
+        )
+        self.trend_canvas.pack(fill=tk.X)
+        self.trend_canvas.bind("<Configure>", lambda _evt: self._redraw_trend())
+
+        trend_note = tk.Button(
+            body,
+            textvariable=self.trend_note_var,
+            bg=INFO_BG,
+            fg="#ffffff",
+            activebackground=INFO_BG,
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            bd=0,
+            padx=10,
+            pady=7,
+            wraplength=340,
+            justify=tk.LEFT,
+            anchor=tk.W,
+            highlightthickness=1,
+            highlightbackground=LINE,
+            font=("Helvetica", 9, "bold"),
+            cursor="arrow",
+        )
+        trend_note.pack(fill=tk.X, pady=(8, 0))
+
     def _build_log_panel(self, parent):
-        panel, _head, body = self.create_panel(parent, "Protocol Log", "Structured replies, telemetry and diagnostics")
-        panel.grid(row=0, column=0, sticky=tk.NSEW)
+        panel, _head, body = self.create_panel(parent, "Protocol Log", "Structured replies, telemetry frames, and diagnostics")
+        panel.grid(row=2, column=0, sticky=tk.NSEW)
         body.grid_columnconfigure(0, weight=1)
         body.grid_rowconfigure(1, weight=1)
 
         self.button(body, "Clear Log", self.clear_log, width=10).grid(row=0, column=0, sticky=tk.E)
-        wrap = tk.Frame(body, bg=VALUE_BG, highlightthickness=1, highlightbackground=LINE)
+        wrap = tk.Frame(body, bg=LOG_BG, highlightthickness=1, highlightbackground=LINE)
         wrap.grid(row=1, column=0, sticky=tk.NSEW, pady=(8, 0))
 
-        self.log = tk.Text(wrap, wrap=tk.WORD, bg=VALUE_BG, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, bd=0, padx=12, pady=10, font=("Menlo", 10))
+        self.log = tk.Text(wrap, wrap=tk.WORD, bg=LOG_BG, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, bd=0, padx=12, pady=10, font=("Menlo", 10))
         scroll = tk.Scrollbar(wrap, command=self.log.yview)
         self.log.configure(yscrollcommand=scroll.set)
         self.log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -617,6 +874,16 @@ class PTZGui:
     def _on_mode_changed(self, *_args):
         if self.mode_var.get() != "pulse_repeat":
             self._cancel_all_pulse_jobs()
+        self._update_mode_hint()
+
+    def _update_mode_hint(self):
+        mode = self.mode_var.get()
+        if mode == "jog":
+            self.mode_hint_var.set("Jog mode: each execute action sends one firmware-side jog with the configured jog time")
+        elif mode == "pulse_repeat":
+            self.mode_hint_var.set("Pulse Repeat mode: execute actions send recurring jog commands at the configured pulse rate")
+        else:
+            self.mode_hint_var.set("Continuous mode: selected axes keep rotating until Stop")
 
     def refresh_ports(self):
         ports = []
@@ -651,22 +918,72 @@ class PTZGui:
             messagebox.showerror("Connect failed", str(exc))
             return
 
+        self.connect_seq += 1
+        self.active_connect_seq = self.connect_seq
         self.link_var.set(f"Connected {port}")
         self.link_badge.configure(bg=OK_BG, activebackground=OK_BG)
         self.build_var.set("FW reading...")
+        self.build_badge.configure(bg=INFO_BG, activebackground=INFO_BG)
         self.set_event("Connected. Querying firmware...", INFO_BG)
         self.append_log(f"[INFO] connected {port} @ {self.baud_var.get()}\n")
-        self.root.after(100, lambda: self.send_line("version"))
-        self.root.after(160, lambda: self.send_line("status"))
+        self.client.flush_input()
+        if self.version_query_job is not None:
+            try:
+                self.root.after_cancel(self.version_query_job)
+            except Exception:
+                pass
+            self.version_query_job = None
+        self.version_query_job = self.root.after(250, lambda seq=self.active_connect_seq: self._query_firmware_version(seq))
+        self.root.after(420, lambda seq=self.active_connect_seq: self._request_status(seq))
 
     def disconnect(self):
         self._cancel_all_pulse_jobs()
+        if self.version_query_job is not None:
+            try:
+                self.root.after_cancel(self.version_query_job)
+            except Exception:
+                pass
+            self.version_query_job = None
         self.client.disconnect()
+        self.active_connect_seq = 0
         self.link_var.set("Disconnected")
         self.link_badge.configure(bg=INFO_BG, activebackground=INFO_BG)
         self.build_var.set("FW unknown")
+        self.build_badge.configure(bg=INFO_BG, activebackground=INFO_BG)
         self.set_event("Disconnected", INFO_BG)
         self.append_log("[INFO] disconnected\n")
+
+    def _query_firmware_version(self, seq: int):
+        if seq != self.active_connect_seq or not self.client.is_open():
+            return
+        self.client.flush_input()
+        self.send_line("version")
+        self.version_query_job = None
+
+    def _request_status(self, seq: int):
+        if seq != self.active_connect_seq or not self.client.is_open():
+            return
+        self.send_line("status")
+
+    def selected_motors(self):
+        return [key for key, card in self.cards.items() if card.selected_var.get()]
+
+    def refresh_group_summary(self):
+        selected = self.selected_motors()
+        total = len(self.cards)
+        for card in self.cards.values():
+            card.refresh_group_visuals()
+        if not selected:
+            self.group_var.set("Grouped axes: none selected | grouped actions disabled")
+            self.group_badge.configure(bg=ERR_BG, activebackground=ERR_BG)
+            return
+        labels = " + ".join(key.upper() for key in selected)
+        if len(selected) == total:
+            self.group_var.set(f"Grouped axes: {labels} | all axes armed")
+            self.group_badge.configure(bg=SELECT_ON_BG, activebackground=SELECT_ON_BG)
+        else:
+            self.group_var.set(f"Grouped axes: {labels} | partial selection")
+            self.group_badge.configure(bg=SELECT_PARTIAL_BG, activebackground=SELECT_PARTIAL_BG)
 
     def send_line(self, line: str):
         try:
@@ -681,6 +998,24 @@ class PTZGui:
             return
         self.send_line(cmd)
         self.manual_var.set("")
+
+    def drive_selected(self, direction: str):
+        selected = self.selected_motors()
+        if not selected:
+            messagebox.showwarning("Grouped axes", "Select at least one motor card before executing grouped motion")
+            return
+        self.append_log(f"[GROUP] execute {direction.upper()} on {', '.join(m.upper() for m in selected)} using mode={self.mode_var.get()}\n")
+        for motor_key in selected:
+            self.drive_motor(motor_key, direction)
+
+    def stop_selected(self):
+        selected = self.selected_motors()
+        if not selected:
+            messagebox.showwarning("Grouped axes", "Select at least one motor card before stopping grouped motion")
+            return
+        self.append_log(f"[GROUP] stop {', '.join(m.upper() for m in selected)}\n")
+        for motor_key in selected:
+            self.stop_motor(motor_key)
 
     def stop_motor(self, motor_key: str):
         self._cancel_pulse_job(motor_key)
@@ -774,9 +1109,7 @@ class PTZGui:
             return
         direction = self.pulse_direction[motor_key]
         self.send_line(f"{motor_key} jog {direction} {speed_hz} {jog_ms}")
-        self.pulse_job[motor_key] = self.root.after(
-            period_ms, lambda m=motor_key, hz=speed_hz, ms=jog_ms, p=period_ms: self._schedule_next_pulse(m, hz, ms, p)
-        )
+        self.pulse_job[motor_key] = self.root.after(period_ms, lambda m=motor_key, hz=speed_hz, ms=jog_ms, p=period_ms: self._schedule_next_pulse(m, hz, ms, p))
 
     def _start_pulse_job(self, motor_key: str, direction: str, speed_rpm: int, speed_hz: int):
         pulse_hz = self._parse_pulse_hz()
@@ -791,9 +1124,7 @@ class PTZGui:
         self._cancel_pulse_job(motor_key)
         self.pulse_active[motor_key] = True
         self.pulse_direction[motor_key] = direction
-        self.append_log(
-            f"[CTRL] {motor_key.upper()} PULSE_REPEAT {direction.upper()} {speed_rpm}rpm {jog_ms}ms @ {pulse_hz:.1f}Hz ({period_ms}ms)\n"
-        )
+        self.append_log(f"[CTRL] {motor_key.upper()} PULSE_REPEAT {direction.upper()} {speed_rpm}rpm {jog_ms}ms @ {pulse_hz:.1f}Hz ({period_ms}ms)\n")
         self._schedule_next_pulse(motor_key, speed_hz, jog_ms, period_ms)
 
     def apply_motor_cfg(self, motor_key: str):
@@ -808,6 +1139,55 @@ class PTZGui:
         self.append_log(f"[CFG] {motor_key.upper()} accel {accel_rpmps}rpm/s -> {accel_hzps}Hz/s\n")
         self.send_line(f"{motor_key} cfg accel {accel_hzps}")
 
+    def prompt_steps_rev(self, motor_key: str):
+        card = self.cards[motor_key]
+        self.prompt_mode_value("Steps/rev", card.steps_var, 200, 51200, is_float=False)
+        try:
+            steps_rev = int(card.steps_var.get())
+        except ValueError:
+            steps_rev = DRIVER_PROFILES[card.driver_var.get().strip().upper() or DEFAULT_DRIVER]["steps_per_rev"]
+        self.set_steps_rev(motor_key, steps_rev)
+
+    def set_steps_rev(self, motor_key: str, steps_rev: int):
+        card = self.cards[motor_key]
+        driver = card.driver_var.get().strip().upper() or DEFAULT_DRIVER
+        steps_rev = max(200, min(51200, int(steps_rev)))
+        card.steps_var.set(str(steps_rev))
+        self.telemetry[motor_key].steps_rev = steps_rev
+        self.cards[motor_key].update_from_telemetry(self.telemetry[motor_key])
+        if driver == "A4988" and steps_rev in A4988_MICROSTEP_STEPS:
+            microstep = steps_rev // 200
+            self.append_log(f"[CFG] {motor_key.upper()} A4988 microstep {microstep}x -> {steps_rev} steps/rev\n")
+            self.send_line(f"{motor_key} cfg microstep {microstep}")
+        else:
+            self.append_log(f"[CFG] {motor_key.upper()} steps/rev {steps_rev}\n")
+            self.send_line(f"{motor_key} cfg steps {steps_rev}")
+
+    def prompt_wakeup_us(self, motor_key: str):
+        card = self.cards[motor_key]
+        self.prompt_mode_value("Wakeup delay (us)", card.wakeup_var, 0, 100000, is_float=False)
+        try:
+            wakeup_us = int(card.wakeup_var.get())
+        except ValueError:
+            wakeup_us = 0
+        self.set_wakeup_us(motor_key, wakeup_us)
+
+    def adjust_wakeup_us(self, motor_key: str, delta: int):
+        card = self.cards[motor_key]
+        try:
+            value = int(card.wakeup_var.get())
+        except ValueError:
+            value = 0
+        self.set_wakeup_us(motor_key, value + delta)
+
+    def set_wakeup_us(self, motor_key: str, wakeup_us: int):
+        wakeup_us = max(0, min(100000, int(wakeup_us)))
+        self.cards[motor_key].wakeup_var.set(str(wakeup_us))
+        self.telemetry[motor_key].wakeup_us = wakeup_us
+        self.cards[motor_key].update_from_telemetry(self.telemetry[motor_key])
+        self.append_log(f"[CFG] {motor_key.upper()} wakeup {wakeup_us}us\n")
+        self.send_line(f"{motor_key} cfg wakeup {wakeup_us}")
+
     def set_driver(self, motor_key: str, driver_name: str):
         driver_name = driver_name.strip().upper()
         if driver_name not in DRIVER_PROFILES:
@@ -816,6 +1196,7 @@ class PTZGui:
         self.cards[motor_key].driver_var.set(driver_name)
         self.telemetry[motor_key].driver = driver_name
         self.telemetry[motor_key].steps_rev = DRIVER_PROFILES[driver_name]["steps_per_rev"]
+        self.telemetry[motor_key].wakeup_us = DRIVER_PROFILES[driver_name]["wakeup_us"]
         self.cards[motor_key].update_from_telemetry(self.telemetry[motor_key])
         self.append_log(f"[CFG] {motor_key.upper()} driver {driver_name}\n")
         self.send_line(f"{motor_key} cfg driver {driver_name.lower()}")
@@ -913,6 +1294,7 @@ class PTZGui:
             tel = self.telemetry[motor_key]
             tel.driver = data.get(f"{motor_key}_drv", tel.driver)
             tel.steps_rev = int(data.get(f"{motor_key}_steps_rev", tel.steps_rev))
+            tel.wakeup_us = int(data.get(f"{motor_key}_wakeup_us", tel.wakeup_us))
             tel.state = data.get(f"{motor_key}_state", tel.state)
             tel.dir = data.get(f"{motor_key}_dir", tel.dir)
             tel.target_hz = int(data.get(f"{motor_key}_target_hz", tel.target_hz))
@@ -924,6 +1306,107 @@ class PTZGui:
             tel.fault = data.get(f"{motor_key}_fault", tel.fault)
             tel.override = int(data.get(f"{motor_key}_override", tel.override))
             self.cards[motor_key].update_from_telemetry(tel)
+        self._append_trend_snapshot()
+        self._redraw_trend()
+
+    def _append_trend_snapshot(self):
+        self.trend_history.append(
+            {
+                "m1_rpm": self.telemetry["m1"].rpm,
+                "m2_rpm": self.telemetry["m2"].rpm,
+                "m1_state": self.telemetry["m1"].state,
+                "m2_state": self.telemetry["m2"].state,
+                "m1_fault": self.telemetry["m1"].fault,
+                "m2_fault": self.telemetry["m2"].fault,
+            }
+        )
+
+    def _state_color(self, state: str, axis: str):
+        if state == "RUN":
+            return M1_TRACE if axis == "m1" else M2_TRACE
+        if state.startswith("RAMP"):
+            return BTN_WARN
+        if state == "PIN_TEST":
+            return ACCENT
+        if state == "FAULT":
+            return ERR_BG
+        return "#c7cfca"
+
+    def _draw_lane(self, x0, x1, y0, y1, state: str, fault: str, axis: str):
+        state_color = self._state_color(state, axis)
+        self.trend_canvas.create_rectangle(x0, y0, x1, y1, fill=state_color, outline="")
+        if fault != "NONE":
+            self.trend_canvas.create_rectangle(x0, y1 - 5, x1, y1, fill=ERR_BG, outline="")
+
+    def _redraw_trend(self):
+        if self.trend_canvas is None:
+            return
+        width = max(420, self.trend_canvas.winfo_width())
+        height = max(220, self.trend_canvas.winfo_height())
+        self.trend_canvas.delete("all")
+        self.trend_canvas.create_rectangle(0, 0, width, height, fill=CHART_BG, outline="")
+
+        left = 42
+        right = width - 10
+        top = 12
+        rpm_bottom = 126
+        lane1_top = 146
+        lane1_bottom = 170
+        lane2_top = 180
+        lane2_bottom = 204
+
+        max_rpm = max(
+            60,
+            max((item["m1_rpm"] for item in self.trend_history), default=0),
+            max((item["m2_rpm"] for item in self.trend_history), default=0),
+        )
+        max_rpm = int(((max_rpm + 29) // 30) * 30)
+
+        for step in range(4):
+            y = top + (rpm_bottom - top) * step / 3
+            self.trend_canvas.create_line(left, y, right, y, fill=CHART_GRID)
+            label_value = max_rpm - (max_rpm * step // 3)
+            self.trend_canvas.create_text(left - 8, y, text=str(label_value), fill=CHART_TEXT, anchor="e", font=("Helvetica", 8))
+
+        self.trend_canvas.create_text(left, top - 6, text="rpm", fill=CHART_TEXT, anchor="w", font=("Helvetica", 8, "bold"))
+        self.trend_canvas.create_text(left, lane1_top - 8, text="M1 state/fault", fill=CHART_TEXT, anchor="w", font=("Helvetica", 8, "bold"))
+        self.trend_canvas.create_text(left, lane2_top - 8, text="M2 state/fault", fill=CHART_TEXT, anchor="w", font=("Helvetica", 8, "bold"))
+
+        history = list(self.trend_history)
+        if not history:
+            self.trend_canvas.create_text(width / 2, height / 2, text="Waiting for STAT telemetry...", fill=CHART_TEXT, font=("Helvetica", 11, "bold"))
+            return
+
+        plot_width = max(1, right - left)
+        count = len(history)
+        step_x = plot_width / max(1, count - 1) if count > 1 else plot_width
+        lane_w = max(2, plot_width / max(1, count))
+        m1_points = []
+        m2_points = []
+
+        def rpm_to_y(rpm: int):
+            return rpm_bottom - (min(max_rpm, rpm) / max_rpm) * (rpm_bottom - top)
+
+        for idx, item in enumerate(history):
+            x = left + idx * step_x
+            x0 = left + idx * lane_w
+            x1 = min(right, x0 + lane_w + 1)
+            self._draw_lane(x0, x1, lane1_top, lane1_bottom, item["m1_state"], item["m1_fault"], "m1")
+            self._draw_lane(x0, x1, lane2_top, lane2_bottom, item["m2_state"], item["m2_fault"], "m2")
+            m1_points.extend((x, rpm_to_y(item["m1_rpm"])))
+            m2_points.extend((x, rpm_to_y(item["m2_rpm"])))
+
+        if len(m1_points) >= 4:
+            self.trend_canvas.create_line(*m1_points, fill=M1_TRACE, width=2, smooth=True)
+        if len(m2_points) >= 4:
+            self.trend_canvas.create_line(*m2_points, fill=M2_TRACE, width=2, smooth=True)
+
+        m1 = self.telemetry["m1"]
+        m2 = self.telemetry["m2"]
+        self.trend_note_var.set(
+            f"M1 {m1.state} {m1.rpm}rpm fault={m1.fault} | "
+            f"M2 {m2.state} {m2.rpm}rpm fault={m2.fault}"
+        )
 
     def _parse_kv_tokens(self, line: str):
         result = {}

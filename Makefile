@@ -1,6 +1,7 @@
 TARGET := ptz_demo_c031c6
 BUILD_DIR := build
 BUILD_TIME := $(shell date '+%Y-%m-%dT%H:%M:%S%z')
+BUILD_INFO_HEADER := $(BUILD_DIR)/build_info.h
 
 XPACK_GCC_BIN := $(HOME)/Library/xPacks/@xpack-dev-tools/arm-none-eabi-gcc/15.2.1-1.1.1/.content/bin
 XPACK_OPENOCD := $(HOME)/Library/xPacks/@xpack-dev-tools/openocd/0.12.0-7.1/.content/bin/openocd
@@ -24,10 +25,9 @@ CPUFLAGS := -mcpu=cortex-m0plus -mthumb
 OPT := -Og
 DEBUG := -g3
 
-DEFS := -DSTM32C031xx -DUSE_HAL_DRIVER \
-  -DPTZ_FW_NAME=\"$(TARGET)\" \
-  -DPTZ_BUILD_TIME=\"$(BUILD_TIME)\"
+DEFS := -DSTM32C031xx -DUSE_HAL_DRIVER
 INCLUDES := \
+  -I$(BUILD_DIR) \
   -ICore/Inc \
   -I.stm32cube_c0/Drivers/STM32C0xx_HAL_Driver/Inc \
   -I.stm32cube_c0/Drivers/STM32C0xx_HAL_Driver/Inc/Legacy \
@@ -36,6 +36,7 @@ INCLUDES := \
 
 CFLAGS := $(CPUFLAGS) $(OPT) $(DEBUG) $(DEFS) $(INCLUDES) \
   -std=gnu11 -Wall -Wextra -ffunction-sections -fdata-sections
+DEPFLAGS := -MMD -MP
 ASFLAGS := $(CPUFLAGS) $(DEBUG) -x assembler-with-cpp
 LDFLAGS := $(CPUFLAGS) -Tlinker/STM32C031C6TX_FLASH.ld \
   -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections \
@@ -71,10 +72,20 @@ C_SRCS := $(APP_SRCS) $(HAL_SRCS)
 S_SRCS := $(STARTUP_SRCS)
 OBJS := $(addprefix $(BUILD_DIR)/,$(C_SRCS:.c=.o)) \
         $(addprefix $(BUILD_DIR)/,$(S_SRCS:.s=.o))
+DEPS := $(OBJS:.o=.d)
 
-.PHONY: all clean size flash
+.PHONY: all clean size flash FORCE
 
 all: $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/$(TARGET).hex size
+
+$(BUILD_INFO_HEADER): FORCE
+	@mkdir -p $(dir $@)
+	@printf '%s\n' \
+	  '#ifndef PTZ_BUILD_INFO_H' \
+	  '#define PTZ_BUILD_INFO_H' \
+	  '#define PTZ_FW_NAME "$(TARGET)"' \
+	  '#define PTZ_BUILD_TIME "$(BUILD_TIME)"' \
+	  '#endif' > $@
 
 $(BUILD_DIR)/$(TARGET).elf: $(OBJS)
 	@mkdir -p $(dir $@)
@@ -86,9 +97,9 @@ $(BUILD_DIR)/$(TARGET).hex: $(BUILD_DIR)/$(TARGET).elf
 $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 	$(OBJCOPY) -O binary -S $< $@
 
-$(BUILD_DIR)/%.o: %.c
+$(BUILD_DIR)/%.o: %.c $(BUILD_INFO_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: %.s
 	@mkdir -p $(dir $@)
@@ -99,6 +110,8 @@ size: $(BUILD_DIR)/$(TARGET).elf
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+FORCE:
 
 flash: $(BUILD_DIR)/$(TARGET).hex
 	@if command -v STM32_Programmer_CLI >/dev/null 2>&1; then \
@@ -112,3 +125,5 @@ flash: $(BUILD_DIR)/$(TARGET).hex
 	  echo "No ST-LINK flash tool found. Install STM32CubeProgrammer/stlink/openocd."; \
 	  exit 1; \
 	fi
+
+-include $(DEPS)

@@ -12,11 +12,18 @@ extern "C" {
 #define PTZ_MOTOR_DEFAULT_ACCEL_HZPS 1600U
 #define PTZ_MOTOR_MIN_ACCEL_HZPS 100U
 #define PTZ_MOTOR_MAX_ACCEL_HZPS 50000U
+#define PTZ_MOTOR_MIN_STEPS_PER_REV 200U
+#define PTZ_MOTOR_MAX_STEPS_PER_REV 51200U
+#define PTZ_MOTOR_MAX_WAKEUP_DELAY_US 100000U
 
 #define PTZ_MOTOR_ZERO_ACTIVE_LEVEL GPIO_PIN_RESET
 
-#define PTZ_MOTOR_GC6609_STEPS_PER_REV 1600U
+#define PTZ_MOTOR_GC6609_STEPS_PER_REV 3200U
 #define PTZ_MOTOR_DM556_STEPS_PER_REV 1600U
+#define PTZ_MOTOR_A4988_STEPS_PER_REV 1600U
+#define PTZ_MOTOR_GC6609_WAKEUP_DELAY_US 0U
+#define PTZ_MOTOR_DM556_WAKEUP_DELAY_US 0U
+#define PTZ_MOTOR_A4988_WAKEUP_DELAY_US 1000U
 
 typedef enum {
   PTZ_MOTOR_STOP = 0,
@@ -46,6 +53,8 @@ typedef enum {
   PTZ_MOTOR_ERR_PARAM,
   PTZ_MOTOR_ERR_SPEED_RANGE,
   PTZ_MOTOR_ERR_ACCEL_RANGE,
+  PTZ_MOTOR_ERR_STEPS_RANGE,
+  PTZ_MOTOR_ERR_WAKEUP_RANGE,
   PTZ_MOTOR_ERR_BUSY
 } PTZ_MotorResult_t;
 
@@ -57,7 +66,8 @@ typedef enum {
 
 typedef enum {
   PTZ_DRIVER_GC6609 = 0,
-  PTZ_DRIVER_DM556
+  PTZ_DRIVER_DM556,
+  PTZ_DRIVER_A4988
 } PTZ_MotorDriver_t;
 
 typedef struct {
@@ -88,6 +98,7 @@ typedef struct {
   volatile uint32_t accel_hzps;
   volatile uint32_t pulse_interval_ticks;
   volatile uint32_t steps_per_rev;
+  volatile uint32_t wakeup_delay_us;
   volatile uint32_t jog_until_ms;
   volatile uint32_t zero_edges;
   volatile uint32_t last_zero_tick_ms;
@@ -113,6 +124,8 @@ PTZ_MotorResult_t PTZ_MotorCommand(PTZ_Motor_t *motor, PTZ_MotorDir_t dir, uint3
 PTZ_MotorResult_t PTZ_MotorJog(PTZ_Motor_t *motor, PTZ_MotorDir_t dir, uint32_t speed_hz, uint32_t duration_ms);
 PTZ_MotorResult_t PTZ_MotorSetAccel(PTZ_Motor_t *motor, uint32_t accel_hzps);
 PTZ_MotorResult_t PTZ_MotorSetDriver(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver);
+PTZ_MotorResult_t PTZ_MotorSetStepsPerRev(PTZ_Motor_t *motor, uint32_t steps_per_rev);
+PTZ_MotorResult_t PTZ_MotorSetWakeupDelayUs(PTZ_Motor_t *motor, uint32_t wakeup_delay_us);
 void PTZ_MotorStop(PTZ_Motor_t *motor);
 void PTZ_MotorEmergencyStop(PTZ_Motor_t *motor, PTZ_MotorFault_t fault);
 void PTZ_MotorClearFault(PTZ_Motor_t *motor);

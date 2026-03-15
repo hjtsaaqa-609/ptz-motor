@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1220" viewBox="0 0 1800 1220">
+  <rect width="1800" height="1220" fill="#f6f9f6"/>
+  <text x="900" y="60" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#14181c">STM32C031C6 + 双路 A4988 扩展板接线图</text>
+  <text x="900" y="98" font-family="Arial, sans-serif" font-size="22" text-anchor="middle" fill="#5c6b66">A4988 建议起步配置: 1/8 细分 = 1600 steps/rev, EN 低有效, Wakeup 1000us</text>
+  <rect x="60" y="150" width="460" height="870" rx="24" fill="#dbe9d8" stroke="#82968c" stroke-width="3"/>
+  <text x="290" y="185" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#14181c">NUCLEO-C031C6</text>
+  <text x="290" y="222" font-family="Arial, sans-serif" font-size="22" text-anchor="middle" fill="#5c6b66">Board side signals</text>
+  <text x="95" y="300" font-family="Arial, sans-serif" font-size="22" fill="#6b46c1">PA8  M1_STEP (TIM1_CH1)</text>
+  <text x="95" y="345" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">PA0  M1_DIR</text>
+  <text x="95" y="390" font-family="Arial, sans-serif" font-size="22" fill="#8b5a2b">PA1  M1_EN</text>
+  <text x="95" y="460" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">3V3  logic supply</text>
+  <text x="95" y="505" font-family="Arial, sans-serif" font-size="22" fill="#111827">GND  logic ground</text>
+  <text x="95" y="610" font-family="Arial, sans-serif" font-size="22" fill="#6b46c1">PB4  M2_STEP (TIM3_CH1)</text>
+  <text x="95" y="655" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">PB0  M2_DIR</text>
+  <text x="95" y="700" font-family="Arial, sans-serif" font-size="22" fill="#8b5a2b">PB1  M2_EN</text>
+  <text x="95" y="770" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">3V3  logic supply</text>
+  <text x="95" y="815" font-family="Arial, sans-serif" font-size="22" fill="#111827">GND  logic ground</text>
+  <rect x="680" y="150" width="580" height="350" rx="24" fill="#dbe3f2" stroke="#82968c" stroke-width="3"/>
+  <rect x="680" y="560" width="580" height="350" rx="24" fill="#dbe3f2" stroke="#82968c" stroke-width="3"/>
+  <text x="970" y="180" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#14181c">A4988 Board #1 (M1)</text>
+  <text x="970" y="590" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#14181c">A4988 Board #2 (M2)</text>
+  <text x="710" y="232" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">Control header</text>
+  <text x="710" y="270" font-family="Arial, sans-serif" font-size="22" fill="#6b46c1">STEP</text>
+  <text x="710" y="310" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">DIR</text>
+  <text x="710" y="350" font-family="Arial, sans-serif" font-size="22" fill="#8b5a2b">EN</text>
+  <text x="710" y="400" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">V (logic 3.3V~5V)</text>
+  <text x="710" y="440" font-family="Arial, sans-serif" font-size="22" fill="#111827">GND</text>
+  <text x="990" y="232" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">Power / motor</text>
+  <text x="990" y="270" font-family="Arial, sans-serif" font-size="22" fill="#d97706">VMOT -> 12V~24V+</text>
+  <text x="990" y="310" font-family="Arial, sans-serif" font-size="22" fill="#111827">GND -> motor power return</text>
+  <text x="990" y="365" font-family="Arial, sans-serif" font-size="22" fill="#14181c">1A / 1B -> one motor coil</text>
+  <text x="990" y="405" font-family="Arial, sans-serif" font-size="22" fill="#14181c">2A / 2B -> other motor coil</text>
+  <text x="710" y="642" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">Control header</text>
+  <text x="710" y="680" font-family="Arial, sans-serif" font-size="22" fill="#6b46c1">STEP</text>
+  <text x="710" y="720" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">DIR</text>
+  <text x="710" y="760" font-family="Arial, sans-serif" font-size="22" fill="#8b5a2b">EN</text>
+  <text x="710" y="810" font-family="Arial, sans-serif" font-size="22" fill="#c0392b">V (logic 3.3V~5V)</text>
+  <text x="710" y="850" font-family="Arial, sans-serif" font-size="22" fill="#111827">GND</text>
+  <text x="990" y="642" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">Power / motor</text>
+  <text x="990" y="680" font-family="Arial, sans-serif" font-size="22" fill="#d97706">VMOT -> 12V~24V+</text>
+  <text x="990" y="720" font-family="Arial, sans-serif" font-size="22" fill="#111827">GND -> motor power return</text>
+  <text x="990" y="775" font-family="Arial, sans-serif" font-size="22" fill="#14181c">1A / 1B -> one motor coil</text>
+  <text x="990" y="815" font-family="Arial, sans-serif" font-size="22" fill="#14181c">2A / 2B -> other motor coil</text>
+  <rect x="1380" y="165" width="340" height="305" rx="22" fill="#ffffff" stroke="#82968c" stroke-width="3"/>
+  <rect x="1380" y="575" width="340" height="305" rx="22" fill="#ffffff" stroke="#82968c" stroke-width="3"/>
+  <text x="1550" y="195" font-family="Arial, sans-serif" font-size="32" font-weight="700" text-anchor="middle" fill="#14181c">42BYGH34-401A #1</text>
+  <text x="1550" y="605" font-family="Arial, sans-serif" font-size="32" font-weight="700" text-anchor="middle" fill="#14181c">42BYGH34-401A #2</text>
+  <text x="1402" y="252" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">实测线圈分组</text>
+  <text x="1402" y="292" font-family="Arial, sans-serif" font-size="22" fill="#14181c">Coil A: 黑 + 红</text>
+  <text x="1402" y="332" font-family="Arial, sans-serif" font-size="22" fill="#14181c">Coil B: 绿 + 蓝</text>
+  <text x="1402" y="390" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">建议首版接法</text>
+  <text x="1402" y="430" font-family="Arial, sans-serif" font-size="22" fill="#14181c">1A -> 黑   1B -> 红</text>
+  <text x="1402" y="470" font-family="Arial, sans-serif" font-size="22" fill="#14181c">2A -> 绿   2B -> 蓝</text>
+  <text x="1402" y="662" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">实测线圈分组</text>
+  <text x="1402" y="702" font-family="Arial, sans-serif" font-size="22" fill="#14181c">Coil A: 黑 + 红</text>
+  <text x="1402" y="742" font-family="Arial, sans-serif" font-size="22" fill="#14181c">Coil B: 绿 + 蓝</text>
+  <text x="1402" y="800" font-family="Arial, sans-serif" font-size="22" fill="#5c6b66">建议首版接法</text>
+  <text x="1402" y="840" font-family="Arial, sans-serif" font-size="22" fill="#14181c">1A -> 黑   1B -> 红</text>
+  <text x="1402" y="880" font-family="Arial, sans-serif" font-size="22" fill="#14181c">2A -> 绿   2B -> 蓝</text>
+  <rect x="60" y="1050" width="1660" height="110" rx="20" fill="#f5dfc6" stroke="#82968c" stroke-width="3"/>
+  <text x="90" y="1084" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="#14181c">Power notes</text>
+  <text x="90" y="1124" font-family="Arial, sans-serif" font-size="22" fill="#14181c">1. A4988 扩展板必须同时接逻辑电源 V(3.3V~5V) 和电机电源 VMOT(12V~24V)。  2. 电机线必须断电后再插拔。  3. 若方向反了，只交换同一组线圈内两根线。</text>
+  <line x1="505" y1="310" x2="700" y2="270" stroke="#6b46c1" stroke-width="5"/>
+  <line x1="505" y1="355" x2="700" y2="310" stroke="#c0392b" stroke-width="5"/>
+  <line x1="505" y1="400" x2="700" y2="350" stroke="#8b5a2b" stroke-width="5"/>
+  <line x1="505" y1="470" x2="700" y2="400" stroke="#c0392b" stroke-width="5"/>
+  <line x1="505" y1="515" x2="700" y2="440" stroke="#111827" stroke-width="5"/>
+  <line x1="505" y1="620" x2="700" y2="680" stroke="#6b46c1" stroke-width="5"/>
+  <line x1="505" y1="665" x2="700" y2="720" stroke="#c0392b" stroke-width="5"/>
+  <line x1="505" y1="710" x2="700" y2="760" stroke="#8b5a2b" stroke-width="5"/>
+  <line x1="505" y1="780" x2="700" y2="810" stroke="#c0392b" stroke-width="5"/>
+  <line x1="505" y1="825" x2="700" y2="850" stroke="#111827" stroke-width="5"/>
+  <line x1="1230" y1="365" x2="1395" y2="300" stroke="#111827" stroke-width="4"/>
+  <line x1="1230" y1="405" x2="1395" y2="340" stroke="#111827" stroke-width="4"/>
+  <line x1="1230" y1="445" x2="1395" y2="380" stroke="#111827" stroke-width="4"/>
+  <line x1="1230" y1="485" x2="1395" y2="420" stroke="#111827" stroke-width="4"/>
+  <line x1="1230" y1="775" x2="1395" y2="710" stroke="#111827" stroke-width="4"/>
+  <line x1="1230" y1="815" x2="1395" y2="750" stroke="#111827" stroke-width="4"/>
+  <line x1="1230" y1="855" x2="1395" y2="790" stroke="#111827" stroke-width="4"/>
+  <line x1="1230" y1="895" x2="1395" y2="830" stroke="#111827" stroke-width="4"/>
+  <rect x="1320" y="930" width="400" height="150" rx="18" fill="#e9efe7" stroke="#82968c" stroke-width="2"/>
+  <text x="1520" y="960" font-family="Arial, sans-serif" font-size="22" text-anchor="middle" fill="#14181c">Firmware assumptions</text>
+  <text x="1345" y="995" font-family="Arial, sans-serif" font-size="18" fill="#14181c">- A4988 profile: EN low-active</text>
+  <text x="1345" y="1025" font-family="Arial, sans-serif" font-size="18" fill="#14181c">- default steps/rev: 1600</text>
+  <text x="1345" y="1055" font-family="Arial, sans-serif" font-size="18" fill="#14181c">- default wakeup: 1000us</text>
+</svg>

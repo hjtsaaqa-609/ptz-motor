@@ -1,4 +1,5 @@
 #include "ui_uart.h"
+#include "build_info.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -104,6 +105,21 @@ static uint8_t parse_u32(const char *text, uint32_t *value) {
   return 1U;
 }
 
+static uint8_t parse_microstep(const char *text, uint32_t *microstep) {
+  uint32_t raw = 0U;
+
+  if (!parse_u32(text, &raw) || microstep == NULL) {
+    return 0U;
+  }
+
+  if (raw == 1U || raw == 2U || raw == 4U || raw == 8U || raw == 16U) {
+    *microstep = raw;
+    return 1U;
+  }
+
+  return 0U;
+}
+
 static PTZ_Motor_t *motor_from_axis(const char *axis_name) {
   if (strcmp(axis_name, "m1") == 0) {
     return s_m1;
@@ -126,6 +142,10 @@ static uint8_t parse_driver(const char *text, PTZ_MotorDriver_t *driver) {
     *driver = PTZ_DRIVER_DM556;
     return 1U;
   }
+  if (strcmp(text, "a4988") == 0) {
+    *driver = PTZ_DRIVER_A4988;
+    return 1U;
+  }
   return 0U;
 }
 
@@ -144,7 +164,10 @@ static void print_help(void) {
   ui_printf("m1 s                       : stop M1 with ramp-down\r\n");
   ui_printf("m1 jog f <hz> <ms>         : firmware-side jog\r\n");
   ui_printf("m1 cfg accel <hzps>        : set M1 acceleration\r\n");
-  ui_printf("m1 cfg driver gc6609|dm556 : switch M1 driver profile\r\n");
+  ui_printf("m1 cfg driver gc6609|dm556|a4988 : switch M1 driver profile\r\n");
+  ui_printf("m1 cfg steps <steps_rev>   : set M1 logical steps per rev\r\n");
+  ui_printf("m1 cfg microstep 1|2|4|8|16: set M1 A4988 logical microstep\r\n");
+  ui_printf("m1 cfg wakeup <us>         : set M1 wakeup delay before first step\r\n");
   ui_printf("m1 diag                    : print M1 diagnostic line\r\n");
   ui_printf("m1 clear                   : clear M1 fault latch\r\n");
   ui_printf("m1 pin dir/en/step hi/lo   : force pin state for probing\r\n");
@@ -160,12 +183,13 @@ static void print_help(void) {
 static void print_status_line(void) {
   ui_printf(
       "STAT tick=%lu telemetry=%u "
-      "m1_drv=%s m1_steps_rev=%lu m1_state=%s m1_dir=%s m1_target_hz=%lu m1_actual_hz=%lu m1_rpm=%lu m1_zero=%u m1_edges=%lu m1_accel_hzps=%lu m1_fault=%s m1_override=%u "
-      "m2_drv=%s m2_steps_rev=%lu m2_state=%s m2_dir=%s m2_target_hz=%lu m2_actual_hz=%lu m2_rpm=%lu m2_zero=%u m2_edges=%lu m2_accel_hzps=%lu m2_fault=%s m2_override=%u\r\n",
+      "m1_drv=%s m1_steps_rev=%lu m1_wakeup_us=%lu m1_state=%s m1_dir=%s m1_target_hz=%lu m1_actual_hz=%lu m1_rpm=%lu m1_zero=%u m1_edges=%lu m1_accel_hzps=%lu m1_fault=%s m1_override=%u "
+      "m2_drv=%s m2_steps_rev=%lu m2_wakeup_us=%lu m2_state=%s m2_dir=%s m2_target_hz=%lu m2_actual_hz=%lu m2_rpm=%lu m2_zero=%u m2_edges=%lu m2_accel_hzps=%lu m2_fault=%s m2_override=%u\r\n",
       (unsigned long)HAL_GetTick(),
       (unsigned)s_telemetry_enabled,
       PTZ_MotorDriverString((PTZ_MotorDriver_t)s_m1->driver),
       (unsigned long)s_m1->steps_per_rev,
+      (unsigned long)s_m1->wakeup_delay_us,
       PTZ_MotorStateString((PTZ_MotorState_t)s_m1->state),
       PTZ_MotorDirString((PTZ_MotorDir_t)s_m1->dir),
       (unsigned long)s_m1->cmd_speed_hz,
@@ -178,6 +202,7 @@ static void print_status_line(void) {
       (unsigned)s_m1->pin_override_active,
       PTZ_MotorDriverString((PTZ_MotorDriver_t)s_m2->driver),
       (unsigned long)s_m2->steps_per_rev,
+      (unsigned long)s_m2->wakeup_delay_us,
       PTZ_MotorStateString((PTZ_MotorState_t)s_m2->state),
       PTZ_MotorDirString((PTZ_MotorDir_t)s_m2->dir),
       (unsigned long)s_m2->cmd_speed_hz,
@@ -192,10 +217,11 @@ static void print_status_line(void) {
 
 static void print_diag_line(const char *axis_name, const PTZ_Motor_t *motor) {
   ui_printf(
-      "DIAG motor=%s driver=%s steps_rev=%lu state=%s dir=%s target_hz=%lu actual_hz=%lu rpm=%lu accel_hzps=%lu zero=%u zero_edges=%lu last_zero_ms=%lu jog_until_ms=%lu fault=%s override=%u\r\n",
+      "DIAG motor=%s driver=%s steps_rev=%lu wakeup_us=%lu state=%s dir=%s target_hz=%lu actual_hz=%lu rpm=%lu accel_hzps=%lu zero=%u zero_edges=%lu last_zero_ms=%lu jog_until_ms=%lu fault=%s override=%u\r\n",
       axis_name,
       PTZ_MotorDriverString((PTZ_MotorDriver_t)motor->driver),
       (unsigned long)motor->steps_per_rev,
+      (unsigned long)motor->wakeup_delay_us,
       PTZ_MotorStateString((PTZ_MotorState_t)motor->state),
       PTZ_MotorDirString((PTZ_MotorDir_t)motor->dir),
       (unsigned long)motor->cmd_speed_hz,
@@ -270,6 +296,9 @@ static void run_motor_cmd(PTZ_Motor_t *m, const char *axis_name, uint8_t argc, c
   uint32_t speed_hz = 0U;
   uint32_t duration_ms = 0U;
   uint32_t accel_hzps = 0U;
+  uint32_t steps_per_rev = 0U;
+  uint32_t wakeup_delay_us = 0U;
+  uint32_t microstep = 0U;
   PTZ_MotorDriver_t driver = PTZ_DRIVER_GC6609;
   PTZ_MotorDir_t dir = PTZ_MOTOR_STOP;
 
@@ -326,6 +355,62 @@ static void run_motor_cmd(PTZ_Motor_t *m, const char *axis_name, uint8_t argc, c
         ui_err("BUSY", "pin_override_active");
       } else {
         ui_err("DRIVER", "driver_set_failed");
+      }
+      return;
+    }
+    if (strcmp(argv[2], "steps") == 0 || strcmp(argv[2], "steps_rev") == 0) {
+      if (!parse_u32(argv[3], &steps_per_rev)) {
+        ui_err("CFG_VALUE", "invalid_steps_rev");
+        return;
+      }
+      ret = PTZ_MotorSetStepsPerRev(m, steps_per_rev);
+      if (ret == PTZ_MOTOR_OK) {
+        ui_ok("motor=%s action=set_steps_rev steps_rev=%lu", axis_name, (unsigned long)m->steps_per_rev);
+      } else if (ret == PTZ_MOTOR_ERR_STEPS_RANGE) {
+        ui_err("STEPS_RANGE", "steps_rev_out_of_range");
+      } else if (ret == PTZ_MOTOR_ERR_BUSY) {
+        ui_err("BUSY", "pin_override_active");
+      } else {
+        ui_err("STEPS", "steps_rev_set_failed");
+      }
+      return;
+    }
+    if (strcmp(argv[2], "microstep") == 0) {
+      if (m->driver != PTZ_DRIVER_A4988) {
+        ui_err("CFG_ITEM", "microstep_only_for_a4988");
+        return;
+      }
+      if (!parse_microstep(argv[3], &microstep)) {
+        ui_err("CFG_VALUE", "invalid_microstep");
+        return;
+      }
+      ret = PTZ_MotorSetStepsPerRev(m, 200U * microstep);
+      if (ret == PTZ_MOTOR_OK) {
+        ui_ok("motor=%s action=set_microstep microstep=%lu steps_rev=%lu", axis_name, (unsigned long)microstep,
+              (unsigned long)m->steps_per_rev);
+      } else if (ret == PTZ_MOTOR_ERR_STEPS_RANGE) {
+        ui_err("STEPS_RANGE", "steps_rev_out_of_range");
+      } else if (ret == PTZ_MOTOR_ERR_BUSY) {
+        ui_err("BUSY", "pin_override_active");
+      } else {
+        ui_err("MICROSTEP", "microstep_set_failed");
+      }
+      return;
+    }
+    if (strcmp(argv[2], "wakeup") == 0 || strcmp(argv[2], "wakeup_us") == 0) {
+      if (!parse_u32(argv[3], &wakeup_delay_us)) {
+        ui_err("CFG_VALUE", "invalid_wakeup_us");
+        return;
+      }
+      ret = PTZ_MotorSetWakeupDelayUs(m, wakeup_delay_us);
+      if (ret == PTZ_MOTOR_OK) {
+        ui_ok("motor=%s action=set_wakeup wakeup_us=%lu", axis_name, (unsigned long)m->wakeup_delay_us);
+      } else if (ret == PTZ_MOTOR_ERR_WAKEUP_RANGE) {
+        ui_err("WAKEUP_RANGE", "wakeup_us_out_of_range");
+      } else if (ret == PTZ_MOTOR_ERR_BUSY) {
+        ui_err("BUSY", "pin_override_active");
+      } else {
+        ui_err("WAKEUP", "wakeup_set_failed");
       }
       return;
     }

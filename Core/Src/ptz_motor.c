@@ -53,6 +53,23 @@ static uint32_t clamp_accel(uint32_t accel_hzps) {
   return accel_hzps;
 }
 
+static uint32_t clamp_steps_per_rev(uint32_t steps_per_rev) {
+  if (steps_per_rev < PTZ_MOTOR_MIN_STEPS_PER_REV) {
+    return PTZ_MOTOR_MIN_STEPS_PER_REV;
+  }
+  if (steps_per_rev > PTZ_MOTOR_MAX_STEPS_PER_REV) {
+    return PTZ_MOTOR_MAX_STEPS_PER_REV;
+  }
+  return steps_per_rev;
+}
+
+static uint32_t clamp_wakeup_delay_us(uint32_t wakeup_delay_us) {
+  if (wakeup_delay_us > PTZ_MOTOR_MAX_WAKEUP_DELAY_US) {
+    return PTZ_MOTOR_MAX_WAKEUP_DELAY_US;
+  }
+  return wakeup_delay_us;
+}
+
 static uint32_t speed_to_interval_ticks(uint32_t timer_tick_hz, uint32_t speed_hz) {
   uint32_t interval;
 
@@ -83,11 +100,51 @@ static void driver_setup_delay(const PTZ_Motor_t *motor) {
   }
 }
 
+static void driver_wakeup_delay_us(uint32_t wakeup_delay_us) {
+  uint32_t ms;
+  uint32_t rem_us;
+  uint32_t loops_per_us;
+  volatile uint32_t loops;
+
+  if (wakeup_delay_us == 0U) {
+    return;
+  }
+
+  ms = wakeup_delay_us / 1000U;
+  rem_us = wakeup_delay_us % 1000U;
+
+  if (ms > 0U) {
+    HAL_Delay(ms);
+  }
+  if (rem_us == 0U) {
+    return;
+  }
+
+  loops_per_us = SystemCoreClock / 3000000U;
+  if (loops_per_us == 0U) {
+    loops_per_us = 1U;
+  }
+
+  loops = rem_us * loops_per_us;
+  while (loops-- > 0U) {
+    __NOP();
+  }
+}
+
 static void apply_driver_profile(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver) {
   motor->driver = driver;
   switch (driver) {
+    case PTZ_DRIVER_A4988:
+      motor->steps_per_rev = PTZ_MOTOR_A4988_STEPS_PER_REV;
+      motor->wakeup_delay_us = PTZ_MOTOR_A4988_WAKEUP_DELAY_US;
+      motor->en_active_level = GPIO_PIN_RESET;
+      motor->dir_fwd_level = GPIO_PIN_SET;
+      motor->dir_rev_level = GPIO_PIN_RESET;
+      motor->setup_delay_loops = 1200U;
+      break;
     case PTZ_DRIVER_DM556:
       motor->steps_per_rev = PTZ_MOTOR_DM556_STEPS_PER_REV;
+      motor->wakeup_delay_us = PTZ_MOTOR_DM556_WAKEUP_DELAY_US;
       motor->en_active_level = GPIO_PIN_RESET;
       motor->dir_fwd_level = GPIO_PIN_SET;
       motor->dir_rev_level = GPIO_PIN_RESET;
@@ -96,6 +153,7 @@ static void apply_driver_profile(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver) {
     case PTZ_DRIVER_GC6609:
     default:
       motor->steps_per_rev = PTZ_MOTOR_GC6609_STEPS_PER_REV;
+      motor->wakeup_delay_us = PTZ_MOTOR_GC6609_WAKEUP_DELAY_US;
       motor->en_active_level = GPIO_PIN_RESET;
       motor->dir_fwd_level = GPIO_PIN_SET;
       motor->dir_rev_level = GPIO_PIN_RESET;
@@ -143,6 +201,7 @@ static void update_output(PTZ_Motor_t *motor, PTZ_MotorDir_t dir, uint32_t speed
 
   motor->pulse_interval_ticks = interval;
   if (!motor->running) {
+    driver_wakeup_delay_us(motor->wakeup_delay_us);
     compare_base = __HAL_TIM_GET_COUNTER(motor->htim) + interval;
     stop_step_output(motor);
     config_step_pin_af(motor);
@@ -196,7 +255,7 @@ void PTZ_MotorInit(PTZ_Motor_t *motor,
   motor->zero_port = zero_port;
   motor->zero_pin = zero_pin;
   motor->timer_tick_hz = timer_tick_hz;
-  apply_driver_profile(motor, PTZ_DRIVER_GC6609);
+  apply_driver_profile(motor, PTZ_DRIVER_A4988);
   motor->dir = PTZ_MOTOR_STOP;
   motor->target_dir = PTZ_MOTOR_STOP;
   motor->state = PTZ_MOTOR_STATE_IDLE;
@@ -281,6 +340,34 @@ PTZ_MotorResult_t PTZ_MotorSetDriver(PTZ_Motor_t *motor, PTZ_MotorDriver_t drive
   apply_driver_profile(motor, driver);
   HAL_GPIO_WritePin(motor->dir_port, motor->dir_pin, motor->dir_fwd_level);
   HAL_GPIO_WritePin(motor->en_port, motor->en_pin, motor_en_inactive_level(motor));
+  return PTZ_MOTOR_OK;
+}
+
+PTZ_MotorResult_t PTZ_MotorSetStepsPerRev(PTZ_Motor_t *motor, uint32_t steps_per_rev) {
+  if (motor == NULL) {
+    return PTZ_MOTOR_ERR_PARAM;
+  }
+  if (motor->pin_override_active) {
+    return PTZ_MOTOR_ERR_BUSY;
+  }
+  if (steps_per_rev < PTZ_MOTOR_MIN_STEPS_PER_REV || steps_per_rev > PTZ_MOTOR_MAX_STEPS_PER_REV) {
+    return PTZ_MOTOR_ERR_STEPS_RANGE;
+  }
+  motor->steps_per_rev = clamp_steps_per_rev(steps_per_rev);
+  return PTZ_MOTOR_OK;
+}
+
+PTZ_MotorResult_t PTZ_MotorSetWakeupDelayUs(PTZ_Motor_t *motor, uint32_t wakeup_delay_us) {
+  if (motor == NULL) {
+    return PTZ_MOTOR_ERR_PARAM;
+  }
+  if (motor->pin_override_active) {
+    return PTZ_MOTOR_ERR_BUSY;
+  }
+  if (wakeup_delay_us > PTZ_MOTOR_MAX_WAKEUP_DELAY_US) {
+    return PTZ_MOTOR_ERR_WAKEUP_RANGE;
+  }
+  motor->wakeup_delay_us = clamp_wakeup_delay_us(wakeup_delay_us);
   return PTZ_MOTOR_OK;
 }
 
@@ -492,6 +579,8 @@ void PTZ_MotorZeroUpdate(PTZ_Motor_t *motor) {
 
 const char *PTZ_MotorDriverString(PTZ_MotorDriver_t driver) {
   switch (driver) {
+    case PTZ_DRIVER_A4988:
+      return "A4988";
     case PTZ_DRIVER_DM556:
       return "DM556";
     case PTZ_DRIVER_GC6609:
