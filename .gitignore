@@ -35,3 +35,5 @@ tmp/
 .stm32cube_c0/package.xml
 .stm32cube_c0/.gitmodules
 
+
+logs/

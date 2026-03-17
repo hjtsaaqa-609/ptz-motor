@@ -134,6 +134,14 @@ static void driver_wakeup_delay_us(uint32_t wakeup_delay_us) {
 static void apply_driver_profile(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver) {
   motor->driver = driver;
   switch (driver) {
+    case PTZ_DRIVER_TMC2209:
+      motor->steps_per_rev = PTZ_MOTOR_TMC2209_STEPS_PER_REV;
+      motor->wakeup_delay_us = PTZ_MOTOR_TMC2209_WAKEUP_DELAY_US;
+      motor->en_active_level = GPIO_PIN_RESET;
+      motor->dir_fwd_level = GPIO_PIN_SET;
+      motor->dir_rev_level = GPIO_PIN_RESET;
+      motor->setup_delay_loops = 1200U;
+      break;
     case PTZ_DRIVER_A4988:
       motor->steps_per_rev = PTZ_MOTOR_A4988_STEPS_PER_REV;
       motor->wakeup_delay_us = PTZ_MOTOR_A4988_WAKEUP_DELAY_US;
@@ -579,6 +587,8 @@ void PTZ_MotorZeroUpdate(PTZ_Motor_t *motor) {
 
 const char *PTZ_MotorDriverString(PTZ_MotorDriver_t driver) {
   switch (driver) {
+    case PTZ_DRIVER_TMC2209:
+      return "TMC2209";
     case PTZ_DRIVER_A4988:
       return "A4988";
     case PTZ_DRIVER_DM556:

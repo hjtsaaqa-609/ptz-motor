@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
+import datetime as dt
+import os
+import platform
 import queue
+import sys
 import threading
+import time
+import traceback
+
+os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
+
 import tkinter as tk
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from tkinter import messagebox, simpledialog
 
 import serial
@@ -14,15 +24,28 @@ DRIVER_PROFILES = {
     "GC6609": {"steps_per_rev": 3200, "wakeup_us": 0},
     "DM556": {"steps_per_rev": 1600, "wakeup_us": 0},
     "A4988": {"steps_per_rev": 1600, "wakeup_us": 1000},
+    "TMC2209": {"steps_per_rev": 1600, "wakeup_us": 0},
 }
-DEFAULT_DRIVER = "GC6609"
+DEFAULT_DRIVER = "A4988"
 A4988_MICROSTEP_STEPS = [200, 400, 800, 1600, 3200]
+TMC2209_MICROSTEP_STEPS = [1600, 3200, 6400, 12800]
+DRIVER_STEP_PRESETS = {
+    "GC6609": [1600, 3200],
+    "DM556": [400, 800, 1600, 3200, 6400],
+    "A4988": A4988_MICROSTEP_STEPS,
+    "TMC2209": TMC2209_MICROSTEP_STEPS,
+}
 SPEED_MIN_RPM = 1
 SPEED_MAX_RPM = 1875
 ACCEL_MIN_RPMPS = 4
 ACCEL_MAX_RPMPS = 1875
 DEFAULT_SPEED_RPM = 10
 DEFAULT_ACCEL_RPMPS = 60
+QUEUE_POLL_BATCH = 64
+LOG_MAX_LINES = 2000
+LOG_TRIM_TO_LINES = 1200
+HEALTH_LOG_INTERVAL_MS = 5000
+SERIAL_IDLE_WARN_MS = 3000
 
 BG = "#eef3ef"
 PANEL = "#fbfdf9"
@@ -56,6 +79,8 @@ CHART_GRID = "#d6ddd7"
 CHART_TEXT = "#54645a"
 M1_TRACE = "#5f9361"
 M2_TRACE = "#5878b1"
+LOG_DIR = Path("/Users/michael/Documents/AI Codex/PTZ/logs")
+LOG_FILE = LOG_DIR / "ptz_gui_runtime.log"
 
 MOTOR_STYLE = {
     "m1": {
@@ -171,6 +196,7 @@ class MotorCard:
         self.fault_var = tk.StringVar(value="NONE")
         self.override_var = tk.StringVar(value="0")
         self.accel_status_var = tk.StringVar(value=f"{DEFAULT_ACCEL_RPMPS} rpm/s")
+        self.steps_buttons = []
 
         self.panel, _head, body = app.create_panel(parent, style["title"], style["tag"], style["panel"], style["head"], style["line"])
         self.panel.pack(fill=tk.X, pady=(0, 16))
@@ -319,6 +345,7 @@ class MotorCard:
         self.app.button(row, "GC6609", lambda: self.app.set_driver(self.motor_key, "GC6609"), width=8).pack(side=tk.LEFT)
         self.app.button(row, "DM556", lambda: self.app.set_driver(self.motor_key, "DM556"), width=8, bg=ACCENT_SOFT).pack(side=tk.LEFT, padx=6)
         self.app.button(row, "A4988", lambda: self.app.set_driver(self.motor_key, "A4988"), width=8).pack(side=tk.LEFT)
+        self.app.button(row, "TMC2209", lambda: self.app.set_driver(self.motor_key, "TMC2209"), width=9).pack(side=tk.LEFT, padx=6)
 
     def _build_steps_row(self, parent, panel_bg):
         row = tk.Frame(parent, bg=panel_bg)
@@ -330,14 +357,28 @@ class MotorCard:
             lambda: self.app.prompt_steps_rev(self.motor_key),
             width=10,
         ).pack(side=tk.LEFT, padx=(10, 10))
-        for steps in A4988_MICROSTEP_STEPS:
-            self.app.button(
-                row,
-                str(steps),
-                lambda s=steps: self.app.set_steps_rev(self.motor_key, s),
-                width=6,
-                bg=ACCENT_SOFT if steps == 1600 else BTN,
-            ).pack(side=tk.LEFT, padx=(0, 6) if steps != A4988_MICROSTEP_STEPS[-1] else 0)
+        for idx in range(5):
+            btn = self.app.button(row, "", lambda: None, width=6)
+            btn.pack(side=tk.LEFT, padx=(0, 6) if idx < 4 else 0)
+            self.steps_buttons.append(btn)
+        self.refresh_steps_presets()
+
+    def refresh_steps_presets(self):
+        driver = self.driver_var.get().strip().upper() or DEFAULT_DRIVER
+        presets = DRIVER_STEP_PRESETS.get(driver, A4988_MICROSTEP_STEPS)
+        current_steps = self.steps_var.get().strip()
+        for idx, btn in enumerate(self.steps_buttons):
+            if idx < len(presets):
+                steps = presets[idx]
+                btn.configure(
+                    text=str(steps),
+                    command=lambda s=steps: self.app.set_steps_rev(self.motor_key, s),
+                    state=tk.NORMAL,
+                    bg=ACCENT_SOFT if str(steps) == current_steps else BTN,
+                    activebackground=BTN_ACTIVE,
+                )
+            else:
+                btn.configure(text="--", command=lambda: None, state=tk.DISABLED, bg=BTN)
 
     def _build_wakeup_row(self, parent, panel_bg):
         row = tk.Frame(parent, bg=panel_bg)
@@ -395,6 +436,7 @@ class MotorCard:
         self.driver_var.set(data.driver)
         self.steps_var.set(str(data.steps_rev))
         self.wakeup_var.set(str(data.wakeup_us))
+        self.refresh_steps_presets()
         self.state_var.set(data.state)
         self.dir_var.set(data.dir)
         steps_rev = max(1, data.steps_rev)
@@ -466,13 +508,26 @@ class PTZGui:
         self.trend_note_var = tk.StringVar(value="Trend window: waiting for STAT frames")
         self.trend_history = deque(maxlen=120)
         self.log = None
+        self.log_line_count = 0
+        self.last_rx_monotonic = None
+        self.last_stat_monotonic = None
+        self.last_health_log_monotonic = None
+        self.stats_frames = 0
+        self.redraw_count = 0
+        self.health_job = None
 
         self.jog_ms_var.trace_add("write", lambda *_args: self._refresh_mode_value_labels())
         self.pulse_hz_var.trace_add("write", lambda *_args: self._refresh_mode_value_labels())
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        self.root.report_callback_exception = self._report_callback_exception
+        self._write_runtime_log("=== GUI START ===")
+        self._write_runtime_log(self._runtime_banner())
         self._build_ui()
+        self._warn_if_legacy_tk()
         self.mode_var.trace_add("write", self._on_mode_changed)
         self.refresh_ports()
         self.root.after(80, self._poll_queue)
+        self.health_job = self.root.after(HEALTH_LOG_INTERVAL_MS, self._health_tick)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._refresh_mode_value_labels()
         self.refresh_group_summary()
@@ -924,8 +979,13 @@ class PTZGui:
         self.link_badge.configure(bg=OK_BG, activebackground=OK_BG)
         self.build_var.set("FW reading...")
         self.build_badge.configure(bg=INFO_BG, activebackground=INFO_BG)
+        self.last_rx_monotonic = None
+        self.last_stat_monotonic = None
+        self.stats_frames = 0
+        self.redraw_count = 0
         self.set_event("Connected. Querying firmware...", INFO_BG)
         self.append_log(f"[INFO] connected {port} @ {self.baud_var.get()}\n")
+        self._write_runtime_log(f"CONNECT port={port} baud={self.baud_var.get()}")
         self.client.flush_input()
         if self.version_query_job is not None:
             try:
@@ -950,8 +1010,56 @@ class PTZGui:
         self.link_badge.configure(bg=INFO_BG, activebackground=INFO_BG)
         self.build_var.set("FW unknown")
         self.build_badge.configure(bg=INFO_BG, activebackground=INFO_BG)
+        self._write_runtime_log("DISCONNECT")
         self.set_event("Disconnected", INFO_BG)
         self.append_log("[INFO] disconnected\n")
+
+    def _write_runtime_log(self, message: str):
+        stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with LOG_FILE.open("a", encoding="utf-8") as fp:
+            fp.write(f"{stamp} {message}\n")
+
+    def _runtime_banner(self) -> str:
+        try:
+            tcl = self.root.tk.call("info", "patchlevel")
+            tk_patch = self.root.tk.call("set", "tk_patchLevel")
+            ws = self.root.tk.call("tk", "windowingsystem")
+        except Exception:
+            tcl = "unknown"
+            tk_patch = "unknown"
+            ws = "unknown"
+        return (
+            f"ENV python={sys.version.split()[0]} exe={sys.executable} "
+            f"platform={platform.platform()} tcl={tcl} tk={tk_patch} ws={ws}"
+        )
+
+    def _warn_if_legacy_tk(self):
+        try:
+            tk_patch = str(self.root.tk.call("set", "tk_patchLevel"))
+            parts = tk_patch.split(".")
+            major = int(parts[0]) if len(parts) > 0 else 0
+            minor = int(parts[1]) if len(parts) > 1 else 0
+            if (major, minor) < (8, 6):
+                msg = f"Legacy Tk runtime detected ({tk_patch}); long-run stability is not guaranteed"
+                self.set_event(msg, BTN_WARN)
+                self.append_log(f"[WARN] {msg}\n")
+                self._write_runtime_log("LEGACY_TK " + tk_patch)
+        except Exception as exc:
+            self._write_runtime_log("LEGACY_TK_CHECK_EXCEPTION " + repr(exc))
+
+    def _report_callback_exception(self, exc, val, tb):
+        message = f"Tk callback exception: {exc.__name__}: {val}"
+        self.set_event(message, ERR_BG)
+        self.append_log(f"[GUI-ERR] {message}\n")
+        self._write_runtime_log("TK_CALLBACK_EXCEPTION " + message)
+        self._write_runtime_log("".join(traceback.format_exception(exc, val, tb)).rstrip())
+
+    @staticmethod
+    def _safe_int(value, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     def _query_firmware_version(self, seq: int):
         if seq != self.active_connect_seq or not self.client.is_open():
@@ -1159,6 +1267,10 @@ class PTZGui:
             microstep = steps_rev // 200
             self.append_log(f"[CFG] {motor_key.upper()} A4988 microstep {microstep}x -> {steps_rev} steps/rev\n")
             self.send_line(f"{motor_key} cfg microstep {microstep}")
+        elif driver == "TMC2209" and steps_rev in TMC2209_MICROSTEP_STEPS:
+            microstep = steps_rev // 200
+            self.append_log(f"[CFG] {motor_key.upper()} TMC2209 microstep {microstep}x -> {steps_rev} steps/rev\n")
+            self.send_line(f"{motor_key} cfg microstep {microstep}")
         else:
             self.append_log(f"[CFG] {motor_key.upper()} steps/rev {steps_rev}\n")
             self.send_line(f"{motor_key} cfg steps {steps_rev}")
@@ -1241,9 +1353,15 @@ class PTZGui:
 
     def clear_log(self):
         self.log.delete("1.0", tk.END)
+        self.log_line_count = 0
 
     def append_log(self, text: str):
         self.log.insert(tk.END, text)
+        self.log_line_count += max(1, text.count("\n"))
+        if self.log_line_count > LOG_MAX_LINES:
+            trim_to = max(1, LOG_TRIM_TO_LINES)
+            self.log.delete("1.0", f"{self.log_line_count - trim_to + 1}.0")
+            self.log_line_count = trim_to
         self.log.see(tk.END)
 
     def set_event(self, text: str, bg: str):
@@ -1251,14 +1369,27 @@ class PTZGui:
         self.event_badge.configure(bg=bg, activebackground=bg)
 
     def _poll_queue(self):
+        processed = 0
+        more_pending = False
         try:
-            while True:
+            while processed < QUEUE_POLL_BATCH:
                 line = self.client.queue.get_nowait()
-                self.append_log(line + "\n")
-                self._handle_line(line)
+                self.last_rx_monotonic = time.monotonic()
+                if not line.startswith("STAT "):
+                    self.append_log(line + "\n")
+                try:
+                    self._handle_line(line)
+                except Exception as exc:
+                    self.append_log(f"[GUI-ERR] line handling failed: {exc}\n")
+                    self.set_event(f"GUI parse error: {exc}", ERR_BG)
+                    self._write_runtime_log("HANDLE_LINE_EXCEPTION " + repr(exc))
+                    self._write_runtime_log(traceback.format_exc().rstrip())
+                processed += 1
+            more_pending = True
         except queue.Empty:
             pass
-        self.root.after(80, self._poll_queue)
+        finally:
+            self.root.after(10 if more_pending else 80, self._poll_queue)
 
     def _handle_line(self, line: str):
         if line.startswith("BUILD "):
@@ -1269,6 +1400,8 @@ class PTZGui:
             self.build_badge.configure(bg=ACCENT, activebackground=ACCENT)
             return
         if line.startswith("STAT "):
+            self.last_stat_monotonic = time.monotonic()
+            self.stats_frames += 1
             data = self._parse_kv_tokens(line)
             self._update_from_status(data)
             return
@@ -1293,18 +1426,18 @@ class PTZGui:
         for motor_key in ("m1", "m2"):
             tel = self.telemetry[motor_key]
             tel.driver = data.get(f"{motor_key}_drv", tel.driver)
-            tel.steps_rev = int(data.get(f"{motor_key}_steps_rev", tel.steps_rev))
-            tel.wakeup_us = int(data.get(f"{motor_key}_wakeup_us", tel.wakeup_us))
+            tel.steps_rev = self._safe_int(data.get(f"{motor_key}_steps_rev"), tel.steps_rev)
+            tel.wakeup_us = self._safe_int(data.get(f"{motor_key}_wakeup_us"), tel.wakeup_us)
             tel.state = data.get(f"{motor_key}_state", tel.state)
             tel.dir = data.get(f"{motor_key}_dir", tel.dir)
-            tel.target_hz = int(data.get(f"{motor_key}_target_hz", tel.target_hz))
-            tel.actual_hz = int(data.get(f"{motor_key}_actual_hz", tel.actual_hz))
-            tel.rpm = int(data.get(f"{motor_key}_rpm", tel.rpm))
-            tel.zero = int(data.get(f"{motor_key}_zero", tel.zero))
-            tel.edges = int(data.get(f"{motor_key}_edges", tel.edges))
-            tel.accel_hzps = int(data.get(f"{motor_key}_accel_hzps", tel.accel_hzps))
+            tel.target_hz = self._safe_int(data.get(f"{motor_key}_target_hz"), tel.target_hz)
+            tel.actual_hz = self._safe_int(data.get(f"{motor_key}_actual_hz"), tel.actual_hz)
+            tel.rpm = self._safe_int(data.get(f"{motor_key}_rpm"), tel.rpm)
+            tel.zero = self._safe_int(data.get(f"{motor_key}_zero"), tel.zero)
+            tel.edges = self._safe_int(data.get(f"{motor_key}_edges"), tel.edges)
+            tel.accel_hzps = self._safe_int(data.get(f"{motor_key}_accel_hzps"), tel.accel_hzps)
             tel.fault = data.get(f"{motor_key}_fault", tel.fault)
-            tel.override = int(data.get(f"{motor_key}_override", tel.override))
+            tel.override = self._safe_int(data.get(f"{motor_key}_override"), tel.override)
             self.cards[motor_key].update_from_telemetry(tel)
         self._append_trend_snapshot()
         self._redraw_trend()
@@ -1341,6 +1474,7 @@ class PTZGui:
     def _redraw_trend(self):
         if self.trend_canvas is None:
             return
+        self.redraw_count += 1
         width = max(420, self.trend_canvas.winfo_width())
         height = max(220, self.trend_canvas.winfo_height())
         self.trend_canvas.delete("all")
@@ -1408,6 +1542,27 @@ class PTZGui:
             f"M2 {m2.state} {m2.rpm}rpm fault={m2.fault}"
         )
 
+    def _health_tick(self):
+        try:
+            now = time.monotonic()
+            qsize = self.client.queue.qsize()
+            rx_idle_ms = -1 if self.last_rx_monotonic is None else int((now - self.last_rx_monotonic) * 1000)
+            stat_idle_ms = -1 if self.last_stat_monotonic is None else int((now - self.last_stat_monotonic) * 1000)
+            self._write_runtime_log(
+                f"HEALTH connected={int(self.client.is_open())} queue={qsize} "
+                f"log_lines={self.log_line_count} stat_frames={self.stats_frames} redraws={self.redraw_count} "
+                f"rx_idle_ms={rx_idle_ms} stat_idle_ms={stat_idle_ms}"
+            )
+            if self.client.is_open() and self.last_stat_monotonic is not None and stat_idle_ms > SERIAL_IDLE_WARN_MS:
+                msg = f"Telemetry stalled: last STAT {stat_idle_ms}ms ago"
+                self.set_event(msg, BTN_WARN)
+                self.append_log(f"[WARN] {msg}\n")
+        except Exception as exc:
+            self._write_runtime_log("HEALTH_EXCEPTION " + repr(exc))
+            self._write_runtime_log(traceback.format_exc().rstrip())
+        finally:
+            self.health_job = self.root.after(HEALTH_LOG_INTERVAL_MS, self._health_tick)
+
     def _parse_kv_tokens(self, line: str):
         result = {}
         for token in line.split()[1:]:
@@ -1419,7 +1574,13 @@ class PTZGui:
 
     def on_close(self):
         self._cancel_all_pulse_jobs()
+        if self.health_job is not None:
+            try:
+                self.root.after_cancel(self.health_job)
+            except Exception:
+                pass
         self.client.disconnect()
+        self._write_runtime_log("=== GUI STOP ===")
         self.root.destroy()
 
 

@@ -105,7 +105,7 @@ static uint8_t parse_u32(const char *text, uint32_t *value) {
   return 1U;
 }
 
-static uint8_t parse_microstep(const char *text, uint32_t *microstep) {
+static uint8_t parse_microstep_a4988(const char *text, uint32_t *microstep) {
   uint32_t raw = 0U;
 
   if (!parse_u32(text, &raw) || microstep == NULL) {
@@ -113,6 +113,21 @@ static uint8_t parse_microstep(const char *text, uint32_t *microstep) {
   }
 
   if (raw == 1U || raw == 2U || raw == 4U || raw == 8U || raw == 16U) {
+    *microstep = raw;
+    return 1U;
+  }
+
+  return 0U;
+}
+
+static uint8_t parse_microstep_tmc2209(const char *text, uint32_t *microstep) {
+  uint32_t raw = 0U;
+
+  if (!parse_u32(text, &raw) || microstep == NULL) {
+    return 0U;
+  }
+
+  if (raw == 8U || raw == 16U || raw == 32U || raw == 64U) {
     *microstep = raw;
     return 1U;
   }
@@ -146,6 +161,10 @@ static uint8_t parse_driver(const char *text, PTZ_MotorDriver_t *driver) {
     *driver = PTZ_DRIVER_A4988;
     return 1U;
   }
+  if (strcmp(text, "tmc2209") == 0) {
+    *driver = PTZ_DRIVER_TMC2209;
+    return 1U;
+  }
   return 0U;
 }
 
@@ -164,9 +183,9 @@ static void print_help(void) {
   ui_printf("m1 s                       : stop M1 with ramp-down\r\n");
   ui_printf("m1 jog f <hz> <ms>         : firmware-side jog\r\n");
   ui_printf("m1 cfg accel <hzps>        : set M1 acceleration\r\n");
-  ui_printf("m1 cfg driver gc6609|dm556|a4988 : switch M1 driver profile\r\n");
+  ui_printf("m1 cfg driver gc6609|dm556|a4988|tmc2209 : switch M1 driver profile\r\n");
   ui_printf("m1 cfg steps <steps_rev>   : set M1 logical steps per rev\r\n");
-  ui_printf("m1 cfg microstep 1|2|4|8|16: set M1 A4988 logical microstep\r\n");
+  ui_printf("m1 cfg microstep ...       : A4988=1|2|4|8|16, TMC2209=8|16|32|64\r\n");
   ui_printf("m1 cfg wakeup <us>         : set M1 wakeup delay before first step\r\n");
   ui_printf("m1 diag                    : print M1 diagnostic line\r\n");
   ui_printf("m1 clear                   : clear M1 fault latch\r\n");
@@ -376,11 +395,16 @@ static void run_motor_cmd(PTZ_Motor_t *m, const char *axis_name, uint8_t argc, c
       return;
     }
     if (strcmp(argv[2], "microstep") == 0) {
-      if (m->driver != PTZ_DRIVER_A4988) {
-        ui_err("CFG_ITEM", "microstep_only_for_a4988");
+      uint8_t ok = 0U;
+      if (m->driver == PTZ_DRIVER_A4988) {
+        ok = parse_microstep_a4988(argv[3], &microstep);
+      } else if (m->driver == PTZ_DRIVER_TMC2209) {
+        ok = parse_microstep_tmc2209(argv[3], &microstep);
+      } else {
+        ui_err("CFG_ITEM", "microstep_only_for_a4988_or_tmc2209");
         return;
       }
-      if (!parse_microstep(argv[3], &microstep)) {
+      if (!ok) {
         ui_err("CFG_VALUE", "invalid_microstep");
         return;
       }
