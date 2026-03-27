@@ -21,10 +21,10 @@ from serial.tools import list_ports
 
 
 DRIVER_PROFILES = {
-    "GC6609": {"steps_per_rev": 3200, "wakeup_us": 0},
-    "DM556": {"steps_per_rev": 1600, "wakeup_us": 0},
-    "A4988": {"steps_per_rev": 1600, "wakeup_us": 1000},
-    "TMC2209": {"steps_per_rev": 1600, "wakeup_us": 0},
+    "GC6609": {"steps_per_rev": 3200, "wakeup_us": 0, "accel_rpmps": 60},
+    "DM556": {"steps_per_rev": 1600, "wakeup_us": 0, "accel_rpmps": 60},
+    "A4988": {"steps_per_rev": 1600, "wakeup_us": 1000, "accel_rpmps": 60},
+    "TMC2209": {"steps_per_rev": 1600, "wakeup_us": 0, "accel_rpmps": 22},
 }
 DEFAULT_DRIVER = "A4988"
 A4988_MICROSTEP_STEPS = [200, 400, 800, 1600, 3200]
@@ -40,7 +40,7 @@ SPEED_MAX_RPM = 1875
 ACCEL_MIN_RPMPS = 4
 ACCEL_MAX_RPMPS = 1875
 DEFAULT_SPEED_RPM = 10
-DEFAULT_ACCEL_RPMPS = 60
+DEFAULT_ACCEL_RPMPS = DRIVER_PROFILES[DEFAULT_DRIVER]["accel_rpmps"]
 QUEUE_POLL_BATCH = 64
 LOG_MAX_LINES = 2000
 LOG_TRIM_TO_LINES = 1200
@@ -115,6 +115,15 @@ class MotorTelemetry:
     accel_hzps: int = 0
     fault: str = "NONE"
     override: int = 0
+    tmc_addr: int = 0
+    tmc_online: int = 0
+    tmc_mode: str = "STEALTHCHOP"
+    tmc_irun: int = 16
+    tmc_ihold: int = 8
+    tmc_iholddelay: int = 8
+    tmc_vsense: int = 0
+    tmc_rsense_mohm: int = 110
+    tmc_est_rms_ma: int = 0
 
 
 class SerialClient:
@@ -196,7 +205,17 @@ class MotorCard:
         self.fault_var = tk.StringVar(value="NONE")
         self.override_var = tk.StringVar(value="0")
         self.accel_status_var = tk.StringVar(value=f"{DEFAULT_ACCEL_RPMPS} rpm/s")
+        self.tmc_addr_var = tk.StringVar(value="0")
+        self.tmc_rsense_var = tk.StringVar(value="110")
+        self.tmc_irun_var = tk.StringVar(value="16")
+        self.tmc_ihold_var = tk.StringVar(value="8")
+        self.tmc_iholddelay_var = tk.StringVar(value="8")
+        self.tmc_vsense_var = tk.StringVar(value="0")
+        self.tmc_mode_var = tk.StringVar(value="STEALTHCHOP")
+        self.tmc_current_var = tk.StringVar(value="0 mA")
+        self.tmc_online_var = tk.StringVar(value="offline")
         self.steps_buttons = []
+        self.tmc_frame = None
 
         self.panel, _head, body = app.create_panel(parent, style["title"], style["tag"], style["panel"], style["head"], style["line"])
         self.panel.pack(fill=tk.X, pady=(0, 16))
@@ -305,7 +324,9 @@ class MotorCard:
         app.button(pins, "STEP Low", lambda: app.pin_test(motor_key, "step", "lo"), width=9).pack(side=tk.LEFT)
         app.button(pins, "STEP High", lambda: app.pin_test(motor_key, "step", "hi"), width=9).pack(side=tk.LEFT, padx=6)
         app.button(pins, "Restore", lambda: app.pin_restore(motor_key), width=9, bg=ACCENT_SOFT).pack(side=tk.RIGHT)
+        self._build_tmc_frame(body, style["panel"])
         self.refresh_group_visuals()
+        self.refresh_tmc_visibility()
 
     def _selection_changed(self):
         if self.selected_var.get():
@@ -407,6 +428,55 @@ class MotorCard:
         self.app.button(row, "+5", lambda: self.adjust_accel(5), width=4).pack(side=tk.LEFT, padx=(0, 6))
         self.app.button(row, "+20", lambda: self.adjust_accel(20), width=5).pack(side=tk.LEFT)
 
+    def _build_tmc_frame(self, parent, panel_bg):
+        frame = tk.Frame(parent, bg=panel_bg, highlightbackground=self.style["line"], highlightthickness=1, bd=0)
+        self.tmc_frame = frame
+
+        head = tk.Frame(frame, bg=panel_bg)
+        head.pack(fill=tk.X, padx=8, pady=(8, 6))
+        tk.Label(head, text="TMC2209 UART", bg=panel_bg, fg=TEXT, font=("Helvetica", 11, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(head, self.tmc_online_var, width=10).pack(side=tk.RIGHT)
+
+        row1 = tk.Frame(frame, bg=panel_bg)
+        row1.pack(fill=tk.X, padx=8, pady=(0, 6))
+        tk.Label(row1, text="Addr", bg=panel_bg, fg=TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(row1, self.tmc_addr_var, lambda: self.app.prompt_tmc_addr(self.motor_key), width=6).pack(side=tk.LEFT, padx=(8, 8))
+        tk.Label(row1, text="Rsense", bg=panel_bg, fg=TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(row1, self.tmc_rsense_var, lambda: self.app.prompt_tmc_rsense(self.motor_key), width=8).pack(side=tk.LEFT, padx=(8, 4))
+        tk.Label(row1, text="mΩ", bg=panel_bg, fg=MUTED, font=("Helvetica", 10)).pack(side=tk.LEFT)
+        self.app.button(row1, "Read", lambda: self.app.tmc_read_status(self.motor_key), width=7).pack(side=tk.RIGHT)
+        self.app.button(row1, "Init", lambda: self.app.tmc_init(self.motor_key), width=7, bg=ACCENT_SOFT).pack(side=tk.RIGHT, padx=6)
+
+        row2 = tk.Frame(frame, bg=panel_bg)
+        row2.pack(fill=tk.X, padx=8, pady=(0, 6))
+        tk.Label(row2, text="IRUN", bg=panel_bg, fg=TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(row2, self.tmc_irun_var, lambda: self.app.prompt_tmc_current(self.motor_key, "irun"), width=6).pack(side=tk.LEFT, padx=(8, 8))
+        tk.Label(row2, text="IHOLD", bg=panel_bg, fg=TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(row2, self.tmc_ihold_var, lambda: self.app.prompt_tmc_current(self.motor_key, "ihold"), width=6).pack(side=tk.LEFT, padx=(8, 8))
+        tk.Label(row2, text="Delay", bg=panel_bg, fg=TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(row2, self.tmc_iholddelay_var, lambda: self.app.prompt_tmc_current(self.motor_key, "iholddelay"), width=6).pack(side=tk.LEFT, padx=(8, 8))
+        self.app.button(row2, "Apply Current", lambda: self.app.tmc_apply_current(self.motor_key), width=13, bg=BTN_WARN).pack(side=tk.RIGHT)
+
+        row3 = tk.Frame(frame, bg=panel_bg)
+        row3.pack(fill=tk.X, padx=8, pady=(0, 8))
+        tk.Label(row3, text="Mode", bg=panel_bg, fg=TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.app.value_button(row3, self.tmc_mode_var, width=13).pack(side=tk.LEFT, padx=(8, 8))
+        self.app.button(row3, "Stealth", lambda: self.app.tmc_set_mode(self.motor_key, "stealthchop"), width=8, bg=ACCENT_SOFT).pack(side=tk.LEFT)
+        self.app.button(row3, "Spread", lambda: self.app.tmc_set_mode(self.motor_key, "spreadcycle"), width=8, bg=BTN_WARN).pack(side=tk.LEFT, padx=6)
+        tk.Label(row3, text="VSENSE", bg=panel_bg, fg=TEXT, font=("Helvetica", 10, "bold")).pack(side=tk.LEFT, padx=(14, 6))
+        self.app.value_button(row3, self.tmc_vsense_var, lambda: self.app.toggle_tmc_vsense(self.motor_key), width=4).pack(side=tk.LEFT)
+        tk.Label(row3, textvariable=self.tmc_current_var, bg=panel_bg, fg=MUTED, font=("Helvetica", 10, "bold")).pack(side=tk.RIGHT)
+
+    def refresh_tmc_visibility(self):
+        if self.tmc_frame is None:
+            return
+        if self.driver_var.get().strip().upper() == "TMC2209":
+            if not self.tmc_frame.winfo_ismapped():
+                self.tmc_frame.pack(fill=tk.X, pady=(10, 0))
+        else:
+            if self.tmc_frame.winfo_ismapped():
+                self.tmc_frame.pack_forget()
+
     def adjust_speed(self, delta: int):
         try:
             value = int(self.speed_var.get())
@@ -436,7 +506,17 @@ class MotorCard:
         self.driver_var.set(data.driver)
         self.steps_var.set(str(data.steps_rev))
         self.wakeup_var.set(str(data.wakeup_us))
+        self.tmc_addr_var.set(str(data.tmc_addr))
+        self.tmc_rsense_var.set(str(data.tmc_rsense_mohm))
+        self.tmc_irun_var.set(str(data.tmc_irun))
+        self.tmc_ihold_var.set(str(data.tmc_ihold))
+        self.tmc_iholddelay_var.set(str(data.tmc_iholddelay))
+        self.tmc_vsense_var.set(str(data.tmc_vsense))
+        self.tmc_mode_var.set(data.tmc_mode)
+        self.tmc_current_var.set(f"{data.tmc_est_rms_ma} mA")
+        self.tmc_online_var.set("online" if data.tmc_online else "offline")
         self.refresh_steps_presets()
+        self.refresh_tmc_visibility()
         self.state_var.set(data.state)
         self.dir_var.set(data.dir)
         steps_rev = max(1, data.steps_rev)
@@ -1271,6 +1351,7 @@ class PTZGui:
             microstep = steps_rev // 200
             self.append_log(f"[CFG] {motor_key.upper()} TMC2209 microstep {microstep}x -> {steps_rev} steps/rev\n")
             self.send_line(f"{motor_key} cfg microstep {microstep}")
+            self.send_line(f"{motor_key} tmc write microstep {microstep}")
         else:
             self.append_log(f"[CFG] {motor_key.upper()} steps/rev {steps_rev}\n")
             self.send_line(f"{motor_key} cfg steps {steps_rev}")
@@ -1305,13 +1386,80 @@ class PTZGui:
         if driver_name not in DRIVER_PROFILES:
             return
         self._cancel_pulse_job(motor_key)
+        profile = DRIVER_PROFILES[driver_name]
         self.cards[motor_key].driver_var.set(driver_name)
+        self.cards[motor_key].accel_var.set(str(profile["accel_rpmps"]))
         self.telemetry[motor_key].driver = driver_name
-        self.telemetry[motor_key].steps_rev = DRIVER_PROFILES[driver_name]["steps_per_rev"]
-        self.telemetry[motor_key].wakeup_us = DRIVER_PROFILES[driver_name]["wakeup_us"]
+        self.telemetry[motor_key].steps_rev = profile["steps_per_rev"]
+        self.telemetry[motor_key].wakeup_us = profile["wakeup_us"]
+        self.telemetry[motor_key].accel_hzps = self.accel_rpmps_to_hzps(motor_key, profile["accel_rpmps"])
         self.cards[motor_key].update_from_telemetry(self.telemetry[motor_key])
         self.append_log(f"[CFG] {motor_key.upper()} driver {driver_name}\n")
         self.send_line(f"{motor_key} cfg driver {driver_name.lower()}")
+
+    def prompt_tmc_addr(self, motor_key: str):
+        card = self.cards[motor_key]
+        self.prompt_mode_value("TMC2209 UART address", card.tmc_addr_var, 0, 3, is_float=False)
+        try:
+            addr = int(card.tmc_addr_var.get())
+        except ValueError:
+            addr = 0
+        self.telemetry[motor_key].tmc_addr = addr
+        self.cards[motor_key].update_from_telemetry(self.telemetry[motor_key])
+        self.append_log(f"[TMC] {motor_key.upper()} addr {addr}\n")
+        self.send_line(f"{motor_key} tmc cfg addr {addr}")
+
+    def prompt_tmc_rsense(self, motor_key: str):
+        card = self.cards[motor_key]
+        self.prompt_mode_value("TMC2209 Rsense (mΩ)", card.tmc_rsense_var, 1, 1000, is_float=False)
+        try:
+            rsense = int(card.tmc_rsense_var.get())
+        except ValueError:
+            rsense = 110
+        self.telemetry[motor_key].tmc_rsense_mohm = rsense
+        self.cards[motor_key].update_from_telemetry(self.telemetry[motor_key])
+        self.append_log(f"[TMC] {motor_key.upper()} rsense {rsense}mΩ\n")
+        self.send_line(f"{motor_key} tmc cfg rsense {rsense}")
+
+    def prompt_tmc_current(self, motor_key: str, field: str):
+        card = self.cards[motor_key]
+        if field == "irun":
+            var, title, lo, hi = card.tmc_irun_var, "TMC2209 IRUN", 0, 31
+        elif field == "ihold":
+            var, title, lo, hi = card.tmc_ihold_var, "TMC2209 IHOLD", 0, 31
+        else:
+            var, title, lo, hi = card.tmc_iholddelay_var, "TMC2209 IHOLDDELAY", 0, 15
+        self.prompt_mode_value(title, var, lo, hi, is_float=False)
+
+    def tmc_read_status(self, motor_key: str):
+        self.append_log(f"[TMC] {motor_key.upper()} read status\n")
+        self.send_line(f"{motor_key} tmc status")
+
+    def tmc_init(self, motor_key: str):
+        self.append_log(f"[TMC] {motor_key.upper()} init/apply UART config\n")
+        self.send_line(f"{motor_key} tmc init")
+
+    def tmc_apply_current(self, motor_key: str):
+        card = self.cards[motor_key]
+        self.send_line(f"{motor_key} tmc cfg rsense {max(1, min(1000, int(card.tmc_rsense_var.get() or '110')))}")
+        self.send_line(f"{motor_key} tmc write ihold {max(0, min(31, int(card.tmc_ihold_var.get() or '8')))}")
+        self.send_line(f"{motor_key} tmc write iholddelay {max(0, min(15, int(card.tmc_iholddelay_var.get() or '8')))}")
+        self.append_log(f"[TMC] {motor_key.upper()} apply current irun/ihold/iholddelay\n")
+        self.send_line(f"{motor_key} tmc write irun {max(0, min(31, int(card.tmc_irun_var.get() or '16')))}")
+
+    def tmc_set_mode(self, motor_key: str, mode: str):
+        self.append_log(f"[TMC] {motor_key.upper()} mode {mode}\n")
+        self.send_line(f"{motor_key} tmc write mode {mode}")
+
+    def toggle_tmc_vsense(self, motor_key: str):
+        card = self.cards[motor_key]
+        try:
+            current = int(card.tmc_vsense_var.get())
+        except ValueError:
+            current = 0
+        value = 0 if current else 1
+        self.append_log(f"[TMC] {motor_key.upper()} vsense {value}\n")
+        self.send_line(f"{motor_key} tmc write vsense {value}")
 
     def drive_motor(self, motor_key: str, direction: str):
         card = self.cards[motor_key]
@@ -1413,6 +1561,27 @@ class PTZGui:
             return
         if line.startswith("DIAG "):
             self.set_event(line, BTN_WARN)
+            return
+        if line.startswith("TMCSTAT "):
+            self.set_event(line, ACCENT)
+            data = self._parse_kv_tokens(line)
+            motor_key = data.get("motor", "").lower()
+            if motor_key in self.telemetry:
+                tel = self.telemetry[motor_key]
+                tel.tmc_addr = self._safe_int(data.get("addr"), tel.tmc_addr)
+                tel.tmc_online = self._safe_int(data.get("online"), tel.tmc_online)
+                tel.tmc_mode = data.get("mode", tel.tmc_mode)
+                tel.tmc_irun = self._safe_int(data.get("irun"), tel.tmc_irun)
+                tel.tmc_ihold = self._safe_int(data.get("ihold"), tel.tmc_ihold)
+                tel.tmc_iholddelay = self._safe_int(data.get("iholddelay"), tel.tmc_iholddelay)
+                tel.tmc_vsense = self._safe_int(data.get("vsense"), tel.tmc_vsense)
+                tel.tmc_rsense_mohm = self._safe_int(data.get("rsense_mohm"), tel.tmc_rsense_mohm)
+                tel.tmc_est_rms_ma = self._safe_int(data.get("est_rms_ma"), tel.tmc_est_rms_ma)
+                tel.steps_rev = self._safe_int(data.get("steps_rev"), tel.steps_rev)
+                self.cards[motor_key].update_from_telemetry(tel)
+            return
+        if line.startswith("TMCREG "):
+            self.set_event(line, INFO_BG)
             return
         if line.startswith("READY "):
             self.set_event(line, INFO_BG)

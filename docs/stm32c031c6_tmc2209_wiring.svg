@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="1120" viewBox="0 0 1640 1120">
+  <rect width="1640" height="1120" fill="#f5f8fb"/>
+  <text x="820" y="52" font-family="Arial, sans-serif" font-size="36" font-weight="700" text-anchor="middle" fill="#111827">STM32C031C6 + TMC2209 Single-Axis Wiring</text>
+  <text x="820" y="90" font-family="Arial, sans-serif" font-size="22" text-anchor="middle" fill="#5b6b7b">Current firmware uses STEP / DIR / ENN. UART wiring is shown explicitly for future register control.</text>
+
+  <rect x="60" y="140" width="430" height="800" rx="24" fill="#dbe7ef" stroke="#728597" stroke-width="3"/>
+  <rect x="585" y="160" width="510" height="460" rx="24" fill="#eef4ff" stroke="#728597" stroke-width="3"/>
+  <rect x="1185" y="180" width="380" height="330" rx="24" fill="#ffffff" stroke="#728597" stroke-width="3"/>
+  <rect x="530" y="700" width="1035" height="250" rx="24" fill="#fff4dc" stroke="#c89b3c" stroke-width="3"/>
+
+  <text x="275" y="180" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#111827">NUCLEO-C031C6</text>
+  <text x="275" y="215" font-family="Arial, sans-serif" font-size="21" text-anchor="middle" fill="#5b6b7b">Single-axis example uses M1</text>
+  <text x="840" y="200" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#111827">TMC2209 Module (M1 / PAN)</text>
+  <text x="1375" y="220" font-family="Arial, sans-serif" font-size="32" font-weight="700" text-anchor="middle" fill="#111827">42BYGH34-401A</text>
+
+  <text x="95" y="285" font-family="Arial, sans-serif" font-size="22" fill="#111827">Motor control pins</text>
+  <text x="115" y="325" font-family="Arial, sans-serif" font-size="21" fill="#6b46c1">PA8  M1_STEP</text>
+  <text x="115" y="365" font-family="Arial, sans-serif" font-size="21" fill="#c0392b">PA0  M1_DIR</text>
+  <text x="115" y="405" font-family="Arial, sans-serif" font-size="21" fill="#8b5a2b">PA1  M1_ENN</text>
+
+  <text x="95" y="495" font-family="Arial, sans-serif" font-size="22" fill="#111827">Logic / UART reserve</text>
+  <text x="115" y="535" font-family="Arial, sans-serif" font-size="21" fill="#dc2626">3V3  -&gt; VIO / VDD</text>
+  <text x="115" y="575" font-family="Arial, sans-serif" font-size="21" fill="#111827">GND  -&gt; logic ground</text>
+  <text x="115" y="615" font-family="Arial, sans-serif" font-size="21" fill="#0f766e">PA9  USART1_TX -&gt; 1k -&gt; PDN_UART</text>
+  <text x="115" y="655" font-family="Arial, sans-serif" font-size="21" fill="#0f766e">PA10 USART1_RX &lt;- PDN_UART</text>
+  <text x="115" y="695" font-family="Arial, sans-serif" font-size="21" fill="#0f766e">Single-wire half-duplex UART</text>
+
+  <text x="95" y="785" font-family="Arial, sans-serif" font-size="22" fill="#111827">Notes</text>
+  <text x="115" y="825" font-family="Arial, sans-serif" font-size="18" fill="#5b6b7b">1. USART2 PA2/PA3 stays on board VCP for GUI.</text>
+  <text x="115" y="855" font-family="Arial, sans-serif" font-size="18" fill="#5b6b7b">2. ENN is low-active on TMC2209.</text>
+  <text x="115" y="885" font-family="Arial, sans-serif" font-size="18" fill="#5b6b7b">3. Current firmware still runs in STEP/DIR/ENN mode.</text>
+
+  <text x="620" y="255" font-family="Arial, sans-serif" font-size="21" fill="#5b6b7b">Control / logic</text>
+  <text x="620" y="295" font-family="Arial, sans-serif" font-size="21" fill="#6b46c1">STEP</text>
+  <text x="620" y="335" font-family="Arial, sans-serif" font-size="21" fill="#c0392b">DIR</text>
+  <text x="620" y="375" font-family="Arial, sans-serif" font-size="21" fill="#8b5a2b">ENN</text>
+  <text x="620" y="425" font-family="Arial, sans-serif" font-size="21" fill="#dc2626">VIO / VDD</text>
+  <text x="620" y="465" font-family="Arial, sans-serif" font-size="21" fill="#111827">GND</text>
+  <text x="620" y="505" font-family="Arial, sans-serif" font-size="21" fill="#0f766e">PDN_UART</text>
+
+  <text x="850" y="255" font-family="Arial, sans-serif" font-size="21" fill="#5b6b7b">Power / motor side</text>
+  <text x="850" y="295" font-family="Arial, sans-serif" font-size="21" fill="#d97706">VM  -&gt; +12V ~ +24V</text>
+  <text x="850" y="335" font-family="Arial, sans-serif" font-size="21" fill="#111827">GND -&gt; motor power return</text>
+  <text x="850" y="385" font-family="Arial, sans-serif" font-size="21" fill="#111827">1A / 1B = one coil</text>
+  <text x="850" y="425" font-family="Arial, sans-serif" font-size="21" fill="#111827">2A / 2B = other coil</text>
+  <text x="850" y="485" font-family="Arial, sans-serif" font-size="19" fill="#5b6b7b">Single-axis UART address strap</text>
+  <text x="850" y="515" font-family="Arial, sans-serif" font-size="19" fill="#5b6b7b">MS1 / AD0 = GND, MS2 / AD1 = GND  (addr 0)</text>
+
+  <text x="1215" y="280" font-family="Arial, sans-serif" font-size="22" fill="#5b6b7b">Measured winding groups</text>
+  <text x="1215" y="320" font-family="Arial, sans-serif" font-size="21" fill="#111827">Coil A: 黑 + 红</text>
+  <text x="1215" y="360" font-family="Arial, sans-serif" font-size="21" fill="#111827">Coil B: 绿 + 蓝</text>
+  <text x="1215" y="430" font-family="Arial, sans-serif" font-size="22" fill="#5b6b7b">Suggested first-pass mapping</text>
+  <text x="1215" y="470" font-family="Arial, sans-serif" font-size="21" fill="#111827">1A -&gt; 黑   1B -&gt; 红</text>
+  <text x="1215" y="510" font-family="Arial, sans-serif" font-size="21" fill="#111827">2A -&gt; 绿   2B -&gt; 蓝</text>
+
+  <text x="1047" y="740" font-family="Arial, sans-serif" font-size="30" font-weight="700" text-anchor="middle" fill="#111827">Important notes</text>
+  <text x="560" y="785" font-family="Arial, sans-serif" font-size="20" fill="#111827">1. This diagram is intentionally single-axis. Use M1 only: PA8 / PA0 / PA1.</text>
+  <text x="560" y="825" font-family="Arial, sans-serif" font-size="20" fill="#111827">2. UART wiring is pre-routed to PDN_UART. Actual UART register control still needs firmware support.</text>
+  <text x="560" y="865" font-family="Arial, sans-serif" font-size="20" fill="#111827">3. For a single driver, keep address strap at addr 0: MS1/AD0=GND, MS2/AD1=GND.</text>
+  <text x="560" y="905" font-family="Arial, sans-serif" font-size="20" fill="#111827">4. Once UART is really enabled, MS1 / MS2 should be used as address straps, and microstep should be configured by UART.</text>
+
+  <line x1="495" y1="322" x2="620" y2="295" stroke="#6b46c1" stroke-width="5"/>
+  <line x1="495" y1="362" x2="620" y2="335" stroke="#c0392b" stroke-width="5"/>
+  <line x1="495" y1="402" x2="620" y2="375" stroke="#8b5a2b" stroke-width="5"/>
+  <line x1="495" y1="532" x2="620" y2="425" stroke="#dc2626" stroke-width="5"/>
+  <line x1="495" y1="572" x2="620" y2="465" stroke="#111827" stroke-width="5"/>
+
+  <line x1="495" y1="615" x2="675" y2="615" stroke="#0f766e" stroke-width="5"/>
+  <rect x="675" y="600" width="60" height="30" rx="6" fill="#e8f6f5" stroke="#0f766e" stroke-width="2"/>
+  <text x="705" y="621" font-family="Arial, sans-serif" font-size="17" text-anchor="middle" fill="#0f766e">1k</text>
+  <line x1="735" y1="615" x2="1010" y2="615" stroke="#0f766e" stroke-width="5"/>
+  <line x1="1010" y1="615" x2="1010" y2="505" stroke="#0f766e" stroke-width="4"/>
+  <line x1="1010" y1="505" x2="620" y2="505" stroke="#0f766e" stroke-width="4"/>
+  <line x1="495" y1="655" x2="1010" y2="655" stroke="#0f766e" stroke-width="5"/>
+  <line x1="1010" y1="655" x2="1010" y2="615" stroke="#0f766e" stroke-width="4"/>
+
+  <line x1="1085" y1="385" x2="1215" y2="448" stroke="#111827" stroke-width="4"/>
+  <line x1="1085" y1="425" x2="1215" y2="488" stroke="#111827" stroke-width="4"/>
+  <line x1="1085" y1="465" x2="1215" y2="528" stroke="#111827" stroke-width="4"/>
+  <line x1="1085" y1="505" x2="1215" y2="568" stroke="#111827" stroke-width="4"/>
+
+  <line x1="495" y1="532" x2="850" y2="295" stroke="#dc2626" stroke-width="3" opacity="0.85"/>
+  <line x1="495" y1="572" x2="850" y2="335" stroke="#111827" stroke-width="3" opacity="0.85"/>
+</svg>

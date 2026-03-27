@@ -1,9 +1,11 @@
 #include "main.h"
 #include "ptz_motor.h"
+#include "tmc2209_uart.h"
 #include "ui_uart.h"
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 static PTZ_Motor_t g_motor1;
@@ -13,6 +15,7 @@ static void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 
 int main(void) {
@@ -27,6 +30,7 @@ int main(void) {
   MX_GPIO_Init();
   MX_TIM1_Init();
   MX_TIM3_Init();
+  MX_USART1_UART_Init();
   MX_USART2_UART_Init();
 
   timer1_tick_hz = HAL_RCC_GetHCLKFreq() / (htim1.Init.Prescaler + 1U);
@@ -45,6 +49,10 @@ int main(void) {
                 M2_EN_GPIO_Port, M2_EN_Pin,
                 M2_ZERO_GPIO_Port, M2_ZERO_Pin,
                 timer3_tick_hz);
+
+  g_motor1.tmc_uart_addr = 0U;
+  g_motor2.tmc_uart_addr = 1U;
+  TMC2209_UART_Init(&huart1);
 
   UI_Init(&huart2, &g_motor1, &g_motor2);
   last_service_tick = HAL_GetTick();
@@ -141,6 +149,24 @@ static void MX_TIM3_Init(void) {
   }
 }
 
+static void MX_USART1_UART_Init(void) {
+  __HAL_RCC_USART1_CLK_ENABLE();
+
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK) {
+    Error_Handler();
+  }
+}
+
 static void MX_USART2_UART_Init(void) {
   __HAL_RCC_USART2_CLK_ENABLE();
 
@@ -214,6 +240,13 @@ static void MX_GPIO_Init(void) {
 
   GPIO_InitStruct.Pin = USART2_RX_Pin;
   HAL_GPIO_Init(USART2_RX_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = USART1_TX_Pin;
+  GPIO_InitStruct.Alternate = GPIO_AF1_USART1;
+  HAL_GPIO_Init(USART1_TX_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = USART1_RX_Pin;
+  HAL_GPIO_Init(USART1_RX_GPIO_Port, &GPIO_InitStruct);
 
   HAL_NVIC_SetPriority(EXTI4_15_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);

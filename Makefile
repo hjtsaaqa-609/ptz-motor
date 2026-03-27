@@ -22,7 +22,7 @@ OBJCOPY := $(CROSS_COMPILE)objcopy
 SIZE := $(CROSS_COMPILE)size
 
 CPUFLAGS := -mcpu=cortex-m0plus -mthumb
-OPT := -Og
+OPT := -Os
 DEBUG := -g3
 
 DEFS := -DSTM32C031xx -DUSE_HAL_DRIVER
@@ -45,6 +45,7 @@ LDFLAGS := $(CPUFLAGS) -Tlinker/STM32C031C6TX_FLASH.ld \
 APP_SRCS := \
   Core/Src/main.c \
   Core/Src/ptz_motor.c \
+  Core/Src/tmc2209_uart.c \
   Core/Src/ui_uart.c \
   Core/Src/stm32c0xx_it.c \
   Core/Src/system_stm32c0xx.c

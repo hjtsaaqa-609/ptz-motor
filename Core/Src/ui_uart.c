@@ -1,5 +1,6 @@
 #include "ui_uart.h"
 #include "build_info.h"
+#include "tmc2209_uart.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -168,6 +169,175 @@ static uint8_t parse_driver(const char *text, PTZ_MotorDriver_t *driver) {
   return 0U;
 }
 
+static uint8_t parse_tmc_reg(const char *text, uint8_t *reg) {
+  if (text == NULL || reg == NULL) {
+    return 0U;
+  }
+  if (strcmp(text, "gconf") == 0) {
+    *reg = TMC2209_REG_GCONF;
+    return 1U;
+  }
+  if (strcmp(text, "ihold_irun") == 0 || strcmp(text, "current") == 0) {
+    *reg = TMC2209_REG_IHOLD_IRUN;
+    return 1U;
+  }
+  if (strcmp(text, "chopconf") == 0) {
+    *reg = TMC2209_REG_CHOPCONF;
+    return 1U;
+  }
+  if (strcmp(text, "pwmconf") == 0) {
+    *reg = TMC2209_REG_PWMCONF;
+    return 1U;
+  }
+  if (strcmp(text, "drv_status") == 0) {
+    *reg = TMC2209_REG_DRV_STATUS;
+    return 1U;
+  }
+  if (strcmp(text, "ioin") == 0) {
+    *reg = TMC2209_REG_IOIN;
+    return 1U;
+  }
+  if (strcmp(text, "tpwmthrs") == 0) {
+    *reg = TMC2209_REG_TPWMTHRS;
+    return 1U;
+  }
+  return 0U;
+}
+
+static void tmc_update_cache_from_snapshot(PTZ_Motor_t *motor, const TMC2209_RegSnapshot_t *snapshot) {
+  uint32_t microstep;
+
+  if (motor == NULL || snapshot == NULL) {
+    return;
+  }
+
+  motor->tmc_last_gconf = snapshot->gconf;
+  motor->tmc_last_ihold_irun = snapshot->ihold_irun;
+  motor->tmc_last_chopconf = snapshot->chopconf;
+  motor->tmc_last_pwmconf = snapshot->pwmconf;
+  motor->tmc_last_drv_status = snapshot->drv_status;
+  motor->tmc_last_ioin = snapshot->ioin;
+  motor->tmc_last_tpwmthrs = snapshot->tpwmthrs;
+  motor->tmc_ihold = (uint8_t)(snapshot->ihold_irun & 0x1FU);
+  motor->tmc_irun = (uint8_t)((snapshot->ihold_irun >> 8) & 0x1FU);
+  motor->tmc_iholddelay = (uint8_t)((snapshot->ihold_irun >> 16) & 0x0FU);
+  motor->tmc_vsense = (uint8_t)((snapshot->chopconf >> 17) & 0x01U);
+  motor->tmc_mode = ((snapshot->gconf >> 2) & 0x01U) ? PTZ_TMC2209_MODE_SPREADCYCLE : PTZ_TMC2209_MODE_STEALTHCHOP;
+  microstep = TMC2209_MresToMicrostep((uint8_t)((snapshot->chopconf >> 24) & 0x0FU));
+  if (microstep != 0U) {
+    motor->steps_per_rev = 200U * microstep;
+  }
+  motor->tmc_uart_online = 1U;
+}
+
+static void print_tmc_status_line(const char *axis_name, const PTZ_Motor_t *motor) {
+  uint32_t est_rms_ma;
+
+  est_rms_ma = TMC2209_CalcCurrentRmsMa(motor->tmc_irun, motor->tmc_vsense, motor->tmc_rsense_mohm);
+  ui_printf(
+      "TMCSTAT motor=%s addr=%u online=%u mode=%s irun=%u ihold=%u iholddelay=%u vsense=%u rsense_mohm=%u est_rms_ma=%lu steps_rev=%lu gconf=0x%08lX ihold_irun=0x%08lX chopconf=0x%08lX pwmconf=0x%08lX drv_status=0x%08lX ioin=0x%08lX tpwmthrs=0x%08lX\r\n",
+      axis_name,
+      (unsigned)motor->tmc_uart_addr,
+      (unsigned)motor->tmc_uart_online,
+      (motor->tmc_mode == PTZ_TMC2209_MODE_SPREADCYCLE) ? "SPREADCYCLE" : "STEALTHCHOP",
+      (unsigned)motor->tmc_irun,
+      (unsigned)motor->tmc_ihold,
+      (unsigned)motor->tmc_iholddelay,
+      (unsigned)motor->tmc_vsense,
+      (unsigned)motor->tmc_rsense_mohm,
+      (unsigned long)est_rms_ma,
+      (unsigned long)motor->steps_per_rev,
+      (unsigned long)motor->tmc_last_gconf,
+      (unsigned long)motor->tmc_last_ihold_irun,
+      (unsigned long)motor->tmc_last_chopconf,
+      (unsigned long)motor->tmc_last_pwmconf,
+      (unsigned long)motor->tmc_last_drv_status,
+      (unsigned long)motor->tmc_last_ioin,
+      (unsigned long)motor->tmc_last_tpwmthrs);
+}
+
+static uint32_t tmc_build_gconf(const PTZ_Motor_t *motor) {
+  uint32_t gconf = motor->tmc_last_gconf;
+
+  gconf |= (1UL << 6); /* pdn_disable */
+  gconf |= (1UL << 7); /* mstep_reg_select */
+  if (motor->tmc_mode == PTZ_TMC2209_MODE_SPREADCYCLE) {
+    gconf |= (1UL << 2);
+  } else {
+    gconf &= ~(1UL << 2);
+  }
+  return gconf;
+}
+
+static uint32_t tmc_build_ihold_irun(const PTZ_Motor_t *motor) {
+  uint32_t reg = motor->tmc_last_ihold_irun;
+
+  reg &= ~((uint32_t)0x1FU);
+  reg &= ~((uint32_t)0x1FU << 8);
+  reg &= ~((uint32_t)0x0FU << 16);
+  reg |= ((uint32_t)motor->tmc_ihold & 0x1FU);
+  reg |= ((uint32_t)motor->tmc_irun & 0x1FU) << 8;
+  reg |= ((uint32_t)motor->tmc_iholddelay & 0x0FU) << 16;
+  return reg;
+}
+
+static uint32_t tmc_build_chopconf(const PTZ_Motor_t *motor) {
+  uint8_t mres = 4U;
+  uint32_t reg = motor->tmc_last_chopconf;
+
+  (void)TMC2209_MicrostepToMres(motor->steps_per_rev / 200U, &mres);
+  reg &= ~((uint32_t)0x01U << 17);
+  reg &= ~((uint32_t)0x0FU << 24);
+  reg |= ((uint32_t)motor->tmc_vsense & 0x01U) << 17;
+  reg |= ((uint32_t)mres & 0x0FU) << 24;
+  return reg;
+}
+
+static TMC2209_UartResult_t tmc_read_snapshot_and_cache(PTZ_Motor_t *motor) {
+  TMC2209_RegSnapshot_t snapshot;
+  TMC2209_UartResult_t ret;
+
+  ret = TMC2209_UART_ReadSnapshot(motor, &snapshot);
+  if (ret == TMC2209_UART_OK) {
+    tmc_update_cache_from_snapshot(motor, &snapshot);
+  } else {
+    motor->tmc_uart_online = 0U;
+  }
+  return ret;
+}
+
+static TMC2209_UartResult_t tmc_apply_config(PTZ_Motor_t *motor) {
+  TMC2209_UartResult_t ret;
+  uint8_t addr;
+
+  if (motor == NULL) {
+    return TMC2209_UART_ERR_PARAM;
+  }
+  addr = motor->tmc_uart_addr & 0x03U;
+
+  ret = TMC2209_UART_WriteRegister(addr, TMC2209_REG_GCONF, tmc_build_gconf(motor));
+  if (ret != TMC2209_UART_OK) {
+    motor->tmc_uart_online = 0U;
+    return ret;
+  }
+  ret = TMC2209_UART_WriteRegister(addr, TMC2209_REG_IHOLD_IRUN, tmc_build_ihold_irun(motor));
+  if (ret != TMC2209_UART_OK) {
+    motor->tmc_uart_online = 0U;
+    return ret;
+  }
+  ret = TMC2209_UART_WriteRegister(addr, TMC2209_REG_CHOPCONF, tmc_build_chopconf(motor));
+  if (ret != TMC2209_UART_OK) {
+    motor->tmc_uart_online = 0U;
+    return ret;
+  }
+  ret = TMC2209_UART_WriteRegister(addr, TMC2209_REG_TPWMTHRS, motor->tmc_last_tpwmthrs);
+  if (ret != TMC2209_UART_OK) {
+    motor->tmc_uart_online = 0U;
+    return ret;
+  }
+  return tmc_read_snapshot_and_cache(motor);
+}
+
 static void print_version(void) {
   ui_printf("BUILD fw=%s time=%s\r\n", s_fw_name, s_build_time);
 }
@@ -189,6 +359,12 @@ static void print_help(void) {
   ui_printf("m1 cfg wakeup <us>         : set M1 wakeup delay before first step\r\n");
   ui_printf("m1 diag                    : print M1 diagnostic line\r\n");
   ui_printf("m1 clear                   : clear M1 fault latch\r\n");
+  ui_printf("m1 tmc cfg addr <0..3>     : set TMC2209 UART address\r\n");
+  ui_printf("m1 tmc cfg rsense <mohm>   : set TMC2209 Rsense in milli-ohm\r\n");
+  ui_printf("m1 tmc init                : enable UART control and apply cached TMC config\r\n");
+  ui_printf("m1 tmc status              : read and print TMC2209 register summary\r\n");
+  ui_printf("m1 tmc read gconf|ihold_irun|chopconf|pwmconf|drv_status|ioin|tpwmthrs\r\n");
+  ui_printf("m1 tmc write irun|ihold|iholddelay|vsense|microstep|tpwmthrs|mode <value>\r\n");
   ui_printf("m1 pin dir/en/step hi/lo   : force pin state for probing\r\n");
   ui_printf("m1 pin restore             : restore normal run mode\r\n");
   ui_printf("m2 ...                     : same commands for motor 2\r\n");
@@ -439,6 +615,180 @@ static void run_motor_cmd(PTZ_Motor_t *m, const char *axis_name, uint8_t argc, c
       return;
     }
     ui_err("CFG_ITEM", "unknown_cfg_item");
+    return;
+  }
+
+  if (strcmp(argv[1], "tmc") == 0) {
+    TMC2209_UartResult_t tmc_ret = TMC2209_UART_ERR_PARAM;
+    uint8_t reg = 0U;
+    uint32_t value = 0U;
+    uint8_t mres = 0U;
+
+    if (m->driver != PTZ_DRIVER_TMC2209) {
+      ui_err("TMC_DRIVER", "driver_is_not_tmc2209");
+      return;
+    }
+    if (argc < 3U) {
+      ui_err("TMC_ARGS", "missing_tmc_args");
+      return;
+    }
+
+    if (strcmp(argv[2], "cfg") == 0) {
+      if (argc < 5U) {
+        ui_err("TMC_CFG", "missing_tmc_cfg_args");
+        return;
+      }
+      if (strcmp(argv[3], "addr") == 0) {
+        if (!parse_u32(argv[4], &value) || value > PTZ_TMC2209_MAX_ADDR) {
+          ui_err("TMC_ADDR", "invalid_tmc_addr");
+          return;
+        }
+        m->tmc_uart_addr = (uint8_t)value;
+        ui_ok("motor=%s action=tmc_set_addr addr=%u", axis_name, (unsigned)m->tmc_uart_addr);
+        return;
+      }
+      if (strcmp(argv[3], "rsense") == 0) {
+        if (!parse_u32(argv[4], &value) || value == 0U || value > 1000U) {
+          ui_err("TMC_RSENSE", "invalid_rsense_mohm");
+          return;
+        }
+        m->tmc_rsense_mohm = (uint16_t)value;
+        ui_ok("motor=%s action=tmc_set_rsense rsense_mohm=%u", axis_name, (unsigned)m->tmc_rsense_mohm);
+        return;
+      }
+      ui_err("TMC_CFG", "unknown_tmc_cfg_item");
+      return;
+    }
+
+    if (strcmp(argv[2], "init") == 0) {
+      tmc_ret = tmc_apply_config(m);
+      if (tmc_ret != TMC2209_UART_OK) {
+        ui_err("TMC_INIT", TMC2209_UartResultString(tmc_ret));
+        return;
+      }
+      print_tmc_status_line(axis_name, m);
+      ui_ok("motor=%s action=tmc_init addr=%u", axis_name, (unsigned)m->tmc_uart_addr);
+      return;
+    }
+
+    if (strcmp(argv[2], "status") == 0 || strcmp(argv[2], "readall") == 0) {
+      tmc_ret = tmc_read_snapshot_and_cache(m);
+      if (tmc_ret != TMC2209_UART_OK) {
+        ui_err("TMC_STATUS", TMC2209_UartResultString(tmc_ret));
+        return;
+      }
+      print_tmc_status_line(axis_name, m);
+      return;
+    }
+
+    if (strcmp(argv[2], "read") == 0) {
+      if (argc < 4U || !parse_tmc_reg(argv[3], &reg)) {
+        ui_err("TMC_READ", "unknown_tmc_reg");
+        return;
+      }
+      tmc_ret = TMC2209_UART_ReadRegister(m->tmc_uart_addr, reg, &value);
+      if (tmc_ret != TMC2209_UART_OK) {
+        m->tmc_uart_online = 0U;
+        ui_err("TMC_READ", TMC2209_UartResultString(tmc_ret));
+        return;
+      }
+      m->tmc_uart_online = 1U;
+      ui_printf("TMCREG motor=%s addr=%u reg=0x%02X value=0x%08lX\r\n",
+                axis_name,
+                (unsigned)m->tmc_uart_addr,
+                (unsigned)reg,
+                (unsigned long)value);
+      if (reg == TMC2209_REG_GCONF || reg == TMC2209_REG_IHOLD_IRUN || reg == TMC2209_REG_CHOPCONF ||
+          reg == TMC2209_REG_PWMCONF || reg == TMC2209_REG_DRV_STATUS || reg == TMC2209_REG_IOIN ||
+          reg == TMC2209_REG_TPWMTHRS) {
+        TMC2209_RegSnapshot_t snap = {
+            .gconf = m->tmc_last_gconf,
+            .ihold_irun = m->tmc_last_ihold_irun,
+            .chopconf = m->tmc_last_chopconf,
+            .pwmconf = m->tmc_last_pwmconf,
+            .drv_status = m->tmc_last_drv_status,
+            .ioin = m->tmc_last_ioin,
+            .tpwmthrs = m->tmc_last_tpwmthrs,
+        };
+        if (reg == TMC2209_REG_GCONF) snap.gconf = value;
+        if (reg == TMC2209_REG_IHOLD_IRUN) snap.ihold_irun = value;
+        if (reg == TMC2209_REG_CHOPCONF) snap.chopconf = value;
+        if (reg == TMC2209_REG_PWMCONF) snap.pwmconf = value;
+        if (reg == TMC2209_REG_DRV_STATUS) snap.drv_status = value;
+        if (reg == TMC2209_REG_IOIN) snap.ioin = value;
+        if (reg == TMC2209_REG_TPWMTHRS) snap.tpwmthrs = value;
+        tmc_update_cache_from_snapshot(m, &snap);
+      }
+      return;
+    }
+
+    if (strcmp(argv[2], "write") == 0) {
+      if (argc < 5U) {
+        ui_err("TMC_WRITE", "missing_tmc_write_args");
+        return;
+      }
+      if (strcmp(argv[3], "irun") == 0) {
+        if (!parse_u32(argv[4], &value) || value > 31U) {
+          ui_err("TMC_IRUN", "invalid_irun");
+          return;
+        }
+        m->tmc_irun = (uint8_t)value;
+      } else if (strcmp(argv[3], "ihold") == 0) {
+        if (!parse_u32(argv[4], &value) || value > 31U) {
+          ui_err("TMC_IHOLD", "invalid_ihold");
+          return;
+        }
+        m->tmc_ihold = (uint8_t)value;
+      } else if (strcmp(argv[3], "iholddelay") == 0) {
+        if (!parse_u32(argv[4], &value) || value > 15U) {
+          ui_err("TMC_IHOLDDELAY", "invalid_iholddelay");
+          return;
+        }
+        m->tmc_iholddelay = (uint8_t)value;
+      } else if (strcmp(argv[3], "vsense") == 0) {
+        if (!parse_u32(argv[4], &value) || value > 1U) {
+          ui_err("TMC_VSENSE", "invalid_vsense");
+          return;
+        }
+        m->tmc_vsense = (uint8_t)value;
+      } else if (strcmp(argv[3], "tpwmthrs") == 0) {
+        if (!parse_u32(argv[4], &value)) {
+          ui_err("TMC_TPWMTHRS", "invalid_tpwmthrs");
+          return;
+        }
+        m->tmc_last_tpwmthrs = value;
+      } else if (strcmp(argv[3], "mode") == 0) {
+        if (strcmp(argv[4], "spread") == 0 || strcmp(argv[4], "spreadcycle") == 0) {
+          m->tmc_mode = PTZ_TMC2209_MODE_SPREADCYCLE;
+        } else if (strcmp(argv[4], "stealth") == 0 || strcmp(argv[4], "stealthchop") == 0) {
+          m->tmc_mode = PTZ_TMC2209_MODE_STEALTHCHOP;
+        } else {
+          ui_err("TMC_MODE", "invalid_tmc_mode");
+          return;
+        }
+      } else if (strcmp(argv[3], "microstep") == 0) {
+        if (!parse_microstep_tmc2209(argv[4], &microstep) || !TMC2209_MicrostepToMres(microstep, &mres)) {
+          ui_err("TMC_MICROSTEP", "invalid_microstep");
+          return;
+        }
+        (void)mres;
+        m->steps_per_rev = 200U * microstep;
+      } else {
+        ui_err("TMC_WRITE", "unknown_tmc_write_item");
+        return;
+      }
+
+      tmc_ret = tmc_apply_config(m);
+      if (tmc_ret != TMC2209_UART_OK) {
+        ui_err("TMC_WRITE", TMC2209_UartResultString(tmc_ret));
+        return;
+      }
+      print_tmc_status_line(axis_name, m);
+      ui_ok("motor=%s action=tmc_write item=%s", axis_name, argv[3]);
+      return;
+    }
+
+    ui_err("TMC_CMD", "unknown_tmc_command");
     return;
   }
 

@@ -15,6 +15,9 @@ extern "C" {
 #define PTZ_MOTOR_MIN_STEPS_PER_REV 200U
 #define PTZ_MOTOR_MAX_STEPS_PER_REV 51200U
 #define PTZ_MOTOR_MAX_WAKEUP_DELAY_US 100000U
+#define PTZ_TMC2209_MIN_ADDR 0U
+#define PTZ_TMC2209_MAX_ADDR 3U
+#define PTZ_TMC2209_DEFAULT_RSENSE_MOHM 110U
 
 #define PTZ_MOTOR_ZERO_ACTIVE_LEVEL GPIO_PIN_RESET
 
@@ -26,6 +29,13 @@ extern "C" {
 #define PTZ_MOTOR_DM556_WAKEUP_DELAY_US 0U
 #define PTZ_MOTOR_A4988_WAKEUP_DELAY_US 1000U
 #define PTZ_MOTOR_TMC2209_WAKEUP_DELAY_US 0U
+
+#define PTZ_MOTOR_DEFAULT_ACCEL_GC6609_HZPS 1600U
+#define PTZ_MOTOR_DEFAULT_ACCEL_DM556_HZPS 1600U
+#define PTZ_MOTOR_DEFAULT_ACCEL_A4988_HZPS 1600U
+#define PTZ_MOTOR_DEFAULT_ACCEL_TMC2209_HZPS 600U
+#define PTZ_MOTOR_TMC2209_STARTUP_ACCEL_HZPS 300U
+#define PTZ_MOTOR_TMC2209_STARTUP_SPEED_HZ 800U
 
 typedef enum {
   PTZ_MOTOR_STOP = 0,
@@ -73,6 +83,11 @@ typedef enum {
   PTZ_DRIVER_TMC2209
 } PTZ_MotorDriver_t;
 
+typedef enum {
+  PTZ_TMC2209_MODE_STEALTHCHOP = 0,
+  PTZ_TMC2209_MODE_SPREADCYCLE = 1
+} PTZ_TMC2209Mode_t;
+
 typedef struct {
   TIM_HandleTypeDef *htim;
   uint32_t channel;
@@ -112,6 +127,21 @@ typedef struct {
   volatile GPIO_PinState en_active_level;
   volatile GPIO_PinState dir_fwd_level;
   volatile GPIO_PinState dir_rev_level;
+  volatile uint8_t tmc_uart_addr;
+  volatile uint8_t tmc_irun;
+  volatile uint8_t tmc_ihold;
+  volatile uint8_t tmc_iholddelay;
+  volatile uint8_t tmc_vsense;
+  volatile uint8_t tmc_uart_online;
+  volatile PTZ_TMC2209Mode_t tmc_mode;
+  volatile uint16_t tmc_rsense_mohm;
+  volatile uint32_t tmc_last_gconf;
+  volatile uint32_t tmc_last_ihold_irun;
+  volatile uint32_t tmc_last_chopconf;
+  volatile uint32_t tmc_last_pwmconf;
+  volatile uint32_t tmc_last_drv_status;
+  volatile uint32_t tmc_last_ioin;
+  volatile uint32_t tmc_last_tpwmthrs;
 } PTZ_Motor_t;
 
 void PTZ_MotorInit(PTZ_Motor_t *motor,

@@ -53,6 +53,26 @@ static uint32_t clamp_accel(uint32_t accel_hzps) {
   return accel_hzps;
 }
 
+static uint32_t effective_accel_hzps(const PTZ_Motor_t *motor, uint32_t current_hz, uint32_t desired_hz) {
+  uint32_t accel_hzps;
+
+  if (motor == NULL) {
+    return PTZ_MOTOR_DEFAULT_ACCEL_HZPS;
+  }
+
+  accel_hzps = motor->accel_hzps;
+  if (motor->driver == PTZ_DRIVER_TMC2209) {
+    if (current_hz < PTZ_MOTOR_TMC2209_STARTUP_SPEED_HZ &&
+        desired_hz <= PTZ_MOTOR_TMC2209_STARTUP_SPEED_HZ) {
+      if (accel_hzps > PTZ_MOTOR_TMC2209_STARTUP_ACCEL_HZPS) {
+        accel_hzps = PTZ_MOTOR_TMC2209_STARTUP_ACCEL_HZPS;
+      }
+    }
+  }
+
+  return accel_hzps;
+}
+
 static uint32_t clamp_steps_per_rev(uint32_t steps_per_rev) {
   if (steps_per_rev < PTZ_MOTOR_MIN_STEPS_PER_REV) {
     return PTZ_MOTOR_MIN_STEPS_PER_REV;
@@ -137,6 +157,7 @@ static void apply_driver_profile(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver) {
     case PTZ_DRIVER_TMC2209:
       motor->steps_per_rev = PTZ_MOTOR_TMC2209_STEPS_PER_REV;
       motor->wakeup_delay_us = PTZ_MOTOR_TMC2209_WAKEUP_DELAY_US;
+      motor->accel_hzps = PTZ_MOTOR_DEFAULT_ACCEL_TMC2209_HZPS;
       motor->en_active_level = GPIO_PIN_RESET;
       motor->dir_fwd_level = GPIO_PIN_SET;
       motor->dir_rev_level = GPIO_PIN_RESET;
@@ -145,6 +166,7 @@ static void apply_driver_profile(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver) {
     case PTZ_DRIVER_A4988:
       motor->steps_per_rev = PTZ_MOTOR_A4988_STEPS_PER_REV;
       motor->wakeup_delay_us = PTZ_MOTOR_A4988_WAKEUP_DELAY_US;
+      motor->accel_hzps = PTZ_MOTOR_DEFAULT_ACCEL_A4988_HZPS;
       motor->en_active_level = GPIO_PIN_RESET;
       motor->dir_fwd_level = GPIO_PIN_SET;
       motor->dir_rev_level = GPIO_PIN_RESET;
@@ -153,6 +175,7 @@ static void apply_driver_profile(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver) {
     case PTZ_DRIVER_DM556:
       motor->steps_per_rev = PTZ_MOTOR_DM556_STEPS_PER_REV;
       motor->wakeup_delay_us = PTZ_MOTOR_DM556_WAKEUP_DELAY_US;
+      motor->accel_hzps = PTZ_MOTOR_DEFAULT_ACCEL_DM556_HZPS;
       motor->en_active_level = GPIO_PIN_RESET;
       motor->dir_fwd_level = GPIO_PIN_SET;
       motor->dir_rev_level = GPIO_PIN_RESET;
@@ -162,6 +185,7 @@ static void apply_driver_profile(PTZ_Motor_t *motor, PTZ_MotorDriver_t driver) {
     default:
       motor->steps_per_rev = PTZ_MOTOR_GC6609_STEPS_PER_REV;
       motor->wakeup_delay_us = PTZ_MOTOR_GC6609_WAKEUP_DELAY_US;
+      motor->accel_hzps = PTZ_MOTOR_DEFAULT_ACCEL_GC6609_HZPS;
       motor->en_active_level = GPIO_PIN_RESET;
       motor->dir_fwd_level = GPIO_PIN_SET;
       motor->dir_rev_level = GPIO_PIN_RESET;
@@ -270,7 +294,6 @@ void PTZ_MotorInit(PTZ_Motor_t *motor,
   motor->fault = PTZ_MOTOR_FAULT_NONE;
   motor->cmd_speed_hz = 0U;
   motor->actual_speed_hz = 0U;
-  motor->accel_hzps = PTZ_MOTOR_DEFAULT_ACCEL_HZPS;
   motor->pulse_interval_ticks = 0U;
   motor->jog_until_ms = 0U;
   motor->zero_edges = 0U;
@@ -278,6 +301,21 @@ void PTZ_MotorInit(PTZ_Motor_t *motor,
   motor->running = 0U;
   motor->zero_active = 0U;
   motor->pin_override_active = 0U;
+  motor->tmc_uart_addr = 0U;
+  motor->tmc_irun = 16U;
+  motor->tmc_ihold = 8U;
+  motor->tmc_iholddelay = 8U;
+  motor->tmc_vsense = 0U;
+  motor->tmc_uart_online = 0U;
+  motor->tmc_mode = PTZ_TMC2209_MODE_STEALTHCHOP;
+  motor->tmc_rsense_mohm = PTZ_TMC2209_DEFAULT_RSENSE_MOHM;
+  motor->tmc_last_gconf = 0U;
+  motor->tmc_last_ihold_irun = 0U;
+  motor->tmc_last_chopconf = 0U;
+  motor->tmc_last_pwmconf = 0U;
+  motor->tmc_last_drv_status = 0U;
+  motor->tmc_last_ioin = 0U;
+  motor->tmc_last_tpwmthrs = 0U;
 
   config_step_pin_af(motor);
   HAL_GPIO_WritePin(motor->en_port, motor->en_pin, motor_en_inactive_level(motor));
@@ -454,9 +492,9 @@ void PTZ_MotorService(PTZ_Motor_t *motor, uint32_t now_ms, uint32_t dt_ms) {
     motor->cmd_speed_hz = 0U;
   }
 
-  step_hz = calc_ramp_step(motor->accel_hzps, dt_ms);
   desired_hz = motor->cmd_speed_hz;
   current_hz = motor->actual_speed_hz;
+  step_hz = calc_ramp_step(effective_accel_hzps(motor, current_hz, desired_hz), dt_ms);
 
   if (motor->target_dir == PTZ_MOTOR_STOP || desired_hz == 0U) {
     if (current_hz <= step_hz) {

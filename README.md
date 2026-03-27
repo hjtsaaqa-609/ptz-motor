@@ -16,6 +16,10 @@
 
 完整说明见：[方案选型更新（2026-03-10）](docs/solution_selection_20260310.md)
 
+本次从 `TMC2209 standalone` 演进到 `TMC2209 UART` 的改动汇总见：
+
+- [代码更新汇总（截至 2026-03-27）](docs/update_summary_20260327.md)
+
 如果后续切换到外置 `DM556` 驱动器做测试，接线和代码调整说明见：
 
 - [STM32C031C6 对接 DM556 外置驱动器调整说明](docs/dm556_adaptation_guide.md)
@@ -29,6 +33,7 @@
 如果后续切换到 `TMC2209` 模块方案，说明见：
 
 - [STM32C031C6 对接 TMC2209 模块调整说明](docs/tmc2209_adaptation_guide.md)
+- [TMC2209 单轴接线图 PNG](docs/stm32c031c6_tmc2209_wiring.png)
 
 ## 目录
 
@@ -42,7 +47,8 @@
 
 - M1: `DIR=PA0`, `EN=PA1`, `STEP=PA8(TIM1_CH1)`, `ZERO=PA4`
 - M2: `DIR=PB0`, `EN=PB1`, `STEP=PB4(TIM3_CH1)`, `ZERO=PB2`
-- UART: `USART2 TX=PA2`, `RX=PA3`（NUCLEO 默认 VCP）, 115200-8-N-1
+- VCP UART: `USART2 TX=PA2`, `RX=PA3`（NUCLEO 默认 VCP）, 115200-8-N-1
+- TMC2209 UART: `USART1 TX=PA9`, `RX=PA10`（单线 `PDN_UART`）
 
 > 注意：不同 STM32C031 封装/板卡的 AF 复用可能不同，需按你的原理图调整 `main.h` 和 `MX_GPIO_Init()`。
 
@@ -70,7 +76,7 @@
 | `GND` | `电机电源负极` | 功率地，必须和 MCU 地共地 |
 | `MS1` / `MS2` | 当前硬件已上拉到高电平 | `11` 对应 `1/16` 细分，软件换算按 `3200 steps/rev` |
 | `CLK` | 不接 | 使用内部时钟 |
-| `PDN/UART` | 不接 | 本 demo 不使用驱动 UART 配置 |
+| `PDN/UART` | `PA9/PA10` 单线 UART | `TMC2209` 场景下可读写寄存器 |
 | `DIAG` / `INDEX` / `VREF` | 非必须 | 调试可选 |
 
 ### 3) 电机绕组连接（每颗 MKS GC6609 模块）
@@ -209,10 +215,19 @@ PB2  <----------- Zero_SW2 (下拉触发, MCU内部上拉)
   - `cfg microstep 1|2|4|8|16`
   - `cfg steps <steps_rev>`
   - `cfg wakeup <us>`
-- `TMC2209` 当前支持的是 `standalone STEP/DIR/ENN` 配置，不包含 UART 寄存器配置；可运行时：
+- `TMC2209` 当前支持 `STEP/DIR/ENN + PDN_UART`：
   - `cfg microstep 8|16|32|64`
   - `cfg steps <steps_rev>`
   - `cfg wakeup <us>`
+  - `tmc cfg addr <0..3>`
+  - `tmc cfg rsense <mohm>`
+  - `tmc init`
+  - `tmc status`
+  - `tmc read gconf|ihold_irun|chopconf|pwmconf|drv_status|ioin|tpwmthrs`
+  - `tmc write irun|ihold|iholddelay|vsense|microstep|tpwmthrs|mode <value>`
+- `TMC2209` 接线图已按当前实现补充 `PA9 / USART1_TX`、`PA10 / USART1_RX` 到 `PDN_UART` 的单线 UART 接法。
+- `TMC2209` 现在可以通过 GUI 或固件命令切 `StealthChop / SpreadCycle`，但前提是 `PDN_UART` 已按接线图接好，且模块地址绑定位正确。
+- 为改善同步带带载起步跳齿，`TMC2209` profile 默认加速度已下调到约 `22 rpm/s`（`600 Hz/s`），并在 `0..800 Hz` 起步区间进一步限制有效加速度到 `300 Hz/s`。
 - 固件默认上电配置为 `A4988`；如果当前硬件实际接的是 `GC6609` 或 `DM556`，上电后需先在 GUI 或串口里切过去。
 
 ## MKS GC6609 接线建议
